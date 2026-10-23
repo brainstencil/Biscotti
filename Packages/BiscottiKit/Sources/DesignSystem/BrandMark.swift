@@ -5,8 +5,6 @@ import SwiftUI
 /// Draws the menu-bar artwork from the app's asset catalog rather than a
 /// second copy of the SVG. That asset lives in the app target, so it resolves
 /// from the main bundle at runtime and renders blank in package previews.
-/// The artwork is forced to template rendering so the sage tint replaces the
-/// SVG's baked-in black fill.
 public struct BrandMark: View {
     /// App asset-catalog name of the single-colour shield + mic artwork
     /// (shared with the idle menu-bar icon).
@@ -27,11 +25,22 @@ public struct BrandMark: View {
     }
 
     public var body: some View {
+        // The colour comes from a sage fill cut to the artwork's alpha, not
+        // from template rendering, so it never depends on whether the image
+        // source honours template mode or on the SVG's baked-in black fill.
+        fittedArtwork
+            .frame(height: height)
+            .overlay { Color.sage }
+            .mask { fittedArtwork }
+    }
+
+    /// `.original` keeps the mask's alpha the artwork's own: a template
+    /// image would instead draw in the inherited foreground style, whose
+    /// default (label colour) is partly transparent and would fade the mark.
+    private var fittedArtwork: some View {
         artwork
-            .renderingMode(.template)
+            .renderingMode(.original)
             .resizable()
             .scaledToFit()
-            .frame(height: height)
-            .foregroundStyle(.sage)
     }
 }

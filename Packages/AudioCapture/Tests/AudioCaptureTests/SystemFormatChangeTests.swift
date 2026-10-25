@@ -17,6 +17,7 @@ struct SystemFormatChangeTests {
     struct FormatChange: CustomTestStringConvertible {
         let before: TapFormat
         let after: TapFormat
+        /// Test-case label, such as "48000 Hz 1 ch → 24000 Hz 1 ch".
         var testDescription: String {
             "\(before) → \(after)"
         }
@@ -25,6 +26,7 @@ struct SystemFormatChangeTests {
     struct TapFormat: CustomStringConvertible {
         let sampleRate: Double
         let channels: UInt32
+        /// Short label, such as "48000 Hz 1 ch".
         var description: String {
             "\(Int(sampleRate)) Hz \(channels) ch"
         }
@@ -37,6 +39,9 @@ struct SystemFormatChangeTests {
         FormatChange(before: TapFormat(sampleRate: 48000, channels: 1), after: TapFormat(sampleRate: 48000, channels: 2))
     ]
 
+    /// Two seconds in one tap format, a reconnect to another format, then
+    /// two more seconds. The decoded file must hold all four seconds, with
+    /// the tone on both sides of the change and no write error.
     @Test("A tap format change mid-recording keeps the system track continuous", arguments: formatChanges)
     func formatChangeKeepsTrackContinuous(change: FormatChange) throws {
         let harness = try SystemTrackHarness(change.before)
@@ -57,6 +62,9 @@ struct SystemFormatChangeTests {
         harness.expectTone(in: samples, from: 2.4, to: 3.7, label: "after the change")
     }
 
+    /// Call mode on and off, then a 44.1 kHz stereo device. The converter
+    /// is built, dropped for the unconverted path and built again; every
+    /// segment must reach the file.
     @Test("Formats that change back and forth keep the track continuous")
     func repeatedFormatChanges() throws {
         let harness = try SystemTrackHarness(TapFormat(sampleRate: 48000, channels: 1))
@@ -81,6 +89,9 @@ struct SystemFormatChangeTests {
         harness.expectTone(in: samples, from: 4.9, to: 5.7, label: "44.1 kHz stereo")
     }
 
+    /// A reconnect that changes the format and takes 1.5 s. The gap is
+    /// filled with client-rate silence, so the track keeps its length and
+    /// the audio after the gap stays in place.
     @Test("A gap across a format-changing reconnect is filled at the file's rate")
     func gapAcrossFormatChangeIsFilled() throws {
         let harness = try SystemTrackHarness(TapFormat(sampleRate: 48000, channels: 1))
@@ -99,6 +110,9 @@ struct SystemFormatChangeTests {
         harness.expectTone(in: samples, from: 3.9, to: 5.2, label: "after the gap")
     }
 
+    /// The first tap runs at 24 kHz, as with AirPods already in call mode.
+    /// Leading silence is counted at the 48 kHz client rate, so the first
+    /// system frame still lands 0.5 s in, aligned with the mic.
     @Test("Leading silence is written at the file's rate when the first tap is not 48 kHz")
     func leadingSilenceAtClientRate() throws {
         let harness = try SystemTrackHarness(TapFormat(sampleRate: 24000, channels: 1))
@@ -138,10 +152,13 @@ private final class SystemTrackHarness {
     private var noise = SystemRandomNumberGenerator()
     private var finished = false
 
+    /// Host-clock seconds of the next buffer `deliver` sends.
     var nextHostSeconds: Double {
         Double(hostNanos) / 1_000_000_000
     }
 
+    /// Opens a real system file through the engine, as `start()` does for
+    /// a tap in `format`.
     init(_ format: TapFormat) throws {
         self.format = format
         url = FileManager.default.temporaryDirectory
@@ -201,6 +218,7 @@ private final class SystemTrackHarness {
         return try MicCaptureTestHelpers.decodedSamples(url)
     }
 
+    /// The decoded samples from `start` to `end` seconds, clamped to the file.
     func window(_ samples: [Float], from start: Double, to end: Double) -> ArraySlice<Float> {
         let lower = min(Int(start * Self.fileRate), samples.count)
         let upper = min(Int(end * Self.fileRate), samples.count)
@@ -223,6 +241,7 @@ private final class SystemTrackHarness {
         #expect(worst > 0.9, "Worst 100 ms window \(label) has only \(worst) of its energy in the tone")
     }
 
+    /// Closes the file if `finish()` has not, and deletes it.
     func dispose() {
         if !finished { engine.teardown() }
         try? FileManager.default.removeItem(at: url)

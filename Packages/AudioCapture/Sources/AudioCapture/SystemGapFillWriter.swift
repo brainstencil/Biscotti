@@ -93,6 +93,9 @@ final class SystemGapFillWriter: @unchecked Sendable {
 
     // MARK: - Silence writing
 
+    /// Writes client-format silence for the time from `expected` to
+    /// `actual`, in `chunkFrames` chunks. Returns the gap's frame count
+    /// (0 below the jitter threshold); a failed write lands in `writeError`.
     private func writeSilenceForGap(
         expected: UInt64,
         actual: UInt64,

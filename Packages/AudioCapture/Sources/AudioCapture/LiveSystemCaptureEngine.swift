@@ -549,6 +549,7 @@ extension LiveSystemCaptureEngine {
         }
     }
 
+    /// Opens the recording's file for the tap that `start()` just created.
     private func openAudioFile(url: URL) throws {
         guard let tapFormat = queryTapFormat() else {
             throw CaptureError.tapCreationFailed(-2)
@@ -601,6 +602,8 @@ extension LiveSystemCaptureEngine {
         audioFile = file
     }
 
+    /// Reads the tap's stream format (`kAudioTapPropertyFormat`), or nil
+    /// if the query fails.
     private func queryTapFormat() -> AudioStreamBasicDescription? {
         var format = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)

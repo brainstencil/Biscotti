@@ -21,6 +21,8 @@ struct SystemFormatConverterTests {
         #expect(client.mBitsPerChannel == 32)
     }
 
+    /// On the common path the converter must not touch the audio: a 48 kHz
+    /// mono buffer comes back sample for sample.
     @Test("A 48 kHz mono tap buffer passes through unchanged")
     func clientFormatPassesThrough() throws {
         let converter = SystemFormatConverter()
@@ -64,6 +66,8 @@ struct SystemFormatConverterTests {
         #expect(expected - Double(total) < 100, "Converted \(total) frames of \(expected): buffers were dropped")
     }
 
+    /// Wraps `samples` in a ring-buffer entry, as the IOProc enqueues them,
+    /// and converts it.
     private func convert(
         _ samples: inout [Float],
         frames: Int,

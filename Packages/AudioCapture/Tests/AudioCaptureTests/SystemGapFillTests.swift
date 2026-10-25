@@ -324,6 +324,8 @@ private final class TestContext {
     let clientFormat: AVAudioFormat
     private var disposed = false
 
+    /// Creates the AAC file and sets its client format to mono Float32 at
+    /// `tapSampleRate`.
     init(tapSampleRate: Double) throws {
         guard let format = SystemFormatConverter.interleavedFloatFormat(sampleRate: tapSampleRate, channelCount: 1) else {
             throw TestError("No client format at \(tapSampleRate) Hz")

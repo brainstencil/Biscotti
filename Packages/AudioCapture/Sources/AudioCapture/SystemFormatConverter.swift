@@ -85,6 +85,9 @@ final class SystemFormatConverter {
         return AVAudioFormat(streamDescription: &description, channelLayout: layout)
     }
 
+    /// Makes `format` the current tap format and builds its converter, or
+    /// none when `format` is already the client format. Logs once per
+    /// format change.
     private func prepare(for format: AVAudioFormat) {
         sourceFormat = format
         converter = nil
@@ -126,6 +129,8 @@ final class SystemFormatConverter {
         return buffer
     }
 
+    /// Hands `input` to the converter once and returns what it produced:
+    /// nil when it produced nothing yet or the conversion failed.
     private static func convert(_ input: AVAudioPCMBuffer, using converter: AVAudioConverter) -> AVAudioPCMBuffer? {
         let converted = Double(input.frameLength) * clientFormat.sampleRate / input.format.sampleRate
         let capacity = AVAudioFrameCount(converted.rounded(.up)) + outputSlackFrames

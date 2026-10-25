@@ -18,8 +18,7 @@
 🔒 <strong>Private</strong> runs locally on your Mac  •  🆓 <strong>Free</strong> no account, no subscription
 </div>
 &nbsp;
-<video src="https://github.com/user-attachments/assets/68d3cea3-fe72-48b7-aa0d-2d97549d8ddb" width="400" controls></video>
-
+<video src="https://github.com/user-attachments/assets/959fa32c-fb33-4ee1-ac75-23682130bca5" width="400" controls></video>
 
 ## Features
 

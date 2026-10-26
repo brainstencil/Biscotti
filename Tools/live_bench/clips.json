@@ -1,0 +1,43 @@
+{
+ "seed": 20261023,
+ "selection": "Chosen from the AMI 1.6.2 word and named-entity annotations only, before any option ran. Three-minute windows on a 60 s grid were measured for the longest turn without another speaker, speaker changes per minute, the share of words overlapping another speaker, one- or two-word interjections, numbers, negations, named entities and speech density; each split's clips cover every property. Calibration and validation come from different meeting series. The mic speaker is the clip's most talkative speaker. names are the capitalized words the annotations mark as a person, place, organization or other name; vocabulary is the same list, used only by vocabulary-on diagnostics.",
+ "clips": [
+  {"id": "smoke", "split": "smoke", "meeting": "ES2011a", "start": 270, "duration": 90, "lead_in": 10, "mic_speaker": "C",
+   "covers": ["pipeline check"]},
+
+  {"id": "cal-es2011a-long-turn", "split": "calibration", "meeting": "ES2011a", "start": 30, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["long uninterrupted turn"]},
+  {"id": "cal-es2011a-fast-turns", "split": "calibration", "meeting": "ES2011a", "start": 690, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["fast turn-taking", "natural overlap", "short interjections", "negations"]},
+  {"id": "cal-is1003b-sparse", "split": "calibration", "meeting": "IS1003b", "start": 30, "duration": 180, "lead_in": 10, "mic_speaker": "C",
+   "covers": ["sparse speech", "negations"]},
+  {"id": "cal-is1003b-numbers", "split": "calibration", "meeting": "IS1003b", "start": 810, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["numbers"]},
+  {"id": "cal-ts3010a-sparse-long-turn", "split": "calibration", "meeting": "TS3010a", "start": 450, "duration": 180, "lead_in": 10, "mic_speaker": "C",
+   "covers": ["sparse speech", "long uninterrupted turn", "numbers"]},
+  {"id": "cal-ts3010a-negations", "split": "calibration", "meeting": "TS3010a", "start": 630, "duration": 180, "lead_in": 10, "mic_speaker": "B",
+   "covers": ["negations", "short interjections"]},
+
+  {"id": "val-es2009a-long-turn", "split": "validation", "meeting": "ES2009a", "start": 270, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["long uninterrupted turn", "names"],
+   "names": ["Barbara", "California", "Michigan", "Santa", "Tom", "U_C_", "U_C_L_A_", "Victoria", "Willing"],
+   "vocabulary": ["Santa Barbara", "California", "Michigan", "Tom Willing", "UC", "UCLA", "Victoria"]},
+  {"id": "val-es2009a-fast-turns-names", "split": "validation", "meeting": "ES2009a", "start": 510, "duration": 180, "lead_in": 10, "mic_speaker": "D",
+   "covers": ["fast turn-taking", "natural overlap", "short interjections", "names", "negations"],
+   "names": ["Bathgate", "Belgium", "Brooklyn", "Brussels", "California", "Chris", "Diego", "Edinburgh", "Francisco", "Glasgow", "Jolla", "La", "Michigan", "P_B_", "San"],
+   "vocabulary": ["Bathgate", "Belgium", "Brooklyn", "Brussels", "California", "Chris", "San Diego", "Edinburgh", "San Francisco", "Glasgow", "La Jolla", "Michigan", "PB"]},
+  {"id": "val-ib4003-numbers", "split": "validation", "meeting": "IB4003", "start": 210, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["numbers"]},
+  {"id": "val-ib4003-names-negations", "split": "validation", "meeting": "IB4003", "start": 1290, "duration": 180, "lead_in": 10, "mic_speaker": "D",
+   "covers": ["names", "negations", "fast turn-taking"],
+   "names": ["Agnes", "Bruno", "E_T_P_F_L_", "Gisella"],
+   "vocabulary": ["Agnes", "Bruno", "ETPFL", "Gisella"]},
+  {"id": "val-ts3012a-long-turn", "split": "validation", "meeting": "TS3012a", "start": 30, "duration": 180, "lead_in": 10, "mic_speaker": "A",
+   "covers": ["long uninterrupted turn", "numbers"]},
+  {"id": "val-ts3012a-sparse", "split": "validation", "meeting": "TS3012a", "start": 450, "duration": 180, "lead_in": 10, "mic_speaker": "C",
+   "covers": ["sparse speech"]},
+
+  {"id": "soak", "split": "soak", "meeting": "TS3006d", "start": 120, "duration": 2700, "lead_in": 10, "mic_speaker": "D",
+   "covers": ["45-minute endurance", "fast turn-taking", "natural overlap"]}
+ ]
+}

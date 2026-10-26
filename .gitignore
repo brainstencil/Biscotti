@@ -22,3 +22,7 @@ calibration.json
 clean-worktree*
 
 .worktrees/
+
+# uv environments and pytest caches (Tools/live_bench)
+.venv/
+.pytest_cache/

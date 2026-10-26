@@ -1,0 +1,450 @@
+{
+ "annotations_version": "1.6.2",
+ "clip_list_sha256": "b8cf0e5f2f7521eaa0a493c7ecc0169f4b8cde34aa8ce485b08606ecdc17f9d6",
+ "clips": {
+  "cal-es2011a-fast-turns": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 87,
+    "mixed.wav": 367,
+    "system.wav": 280
+   },
+   "files": {
+    "meta.json": "ae45b3ee070caa03300150c92d95f922efd5d5aebe492cb81b54d8ec20f39e0d",
+    "mic.wav": "bcc494adb9d11a6b3aefdbc7054da27640a2f74f74eead77fee5e64092743a8a",
+    "mixed.wav": "f85e5b2594eea51eb10d2e94c8351e026726740599bc80188c31f4b14e53262a",
+    "reference.json": "432c4c2ddd9d4dbb898bb82c235f124a76501b81b08aadb3b1ce7e4397af2cc7",
+    "system.wav": "a6d0ed1e2374ad28bb3c650bd92168b733941b5b00be5783d9a2d9b8fc7390c0"
+   },
+   "gains_db": {
+    "A": 9.07,
+    "B": 15.99,
+    "C": 11.23,
+    "D": 16.39
+   },
+   "meeting": "ES2011a",
+   "mic_speaker": "A",
+   "split": "calibration"
+  },
+  "cal-es2011a-long-turn": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "0d73de9149bc49027e84bb677dace42a6789a75c5c67c7ae15c799e31f477264",
+    "mic.wav": "ce7b0c0e32b8d9db6252c60b2d5f6b9012a451583cbe8c776c455c19203d32b4",
+    "mixed.wav": "b747631b4005c5ca9629a36ba5fed34e96af2848c6c3422e4302434ba8aaaa29",
+    "reference.json": "ab5a8da2f3b051cf57d626cd670ee052ec5f56975de3889f70d2d0f184833e70",
+    "system.wav": "62b054beac83d68682dfa289a21a8e34678b531007952afe68cfac340ef2492f"
+   },
+   "gains_db": {
+    "A": 9.07,
+    "B": 15.99,
+    "C": 11.23,
+    "D": 16.39
+   },
+   "meeting": "ES2011a",
+   "mic_speaker": "A",
+   "split": "calibration"
+  },
+  "cal-is1003b-numbers": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 12,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "0e1cc54d5bf19fef954b95c9699027943dd6a3ac99c6bb7dfa640dfb23c822c6",
+    "mic.wav": "7694028f25004de59cd81a1e55a53f3285a2746f7a8fa404f7e973ada14940d9",
+    "mixed.wav": "c03a5509f149bee20d5ff8205869300172b6c66f9ecfadc653a4192b2a2dfe2e",
+    "reference.json": "0da246e05e15413a01eb6b59925895ced7e849efe4b7b3ebad3d7c97d1701be9",
+    "system.wav": "4be2a8a817b16c9737b2e0e45cd723b6d2c2138887814a4815e7580bae1f11e5"
+   },
+   "gains_db": {
+    "A": 9.66,
+    "B": 3.48,
+    "C": 8.26,
+    "D": 4.71
+   },
+   "meeting": "IS1003b",
+   "mic_speaker": "A",
+   "split": "calibration"
+  },
+  "cal-is1003b-sparse": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 1,
+    "mixed.wav": 299,
+    "system.wav": 3
+   },
+   "files": {
+    "meta.json": "2bbe490a1a1f93b66cbbf03baf00106239c4591f7158504e60e2f83337cd52bc",
+    "mic.wav": "51eb73db8e4bfcb54a61992017f6811091e59362438e5b918989cbdeee2258d7",
+    "mixed.wav": "1c46afc4cca133353fad82bd6ae5bec823cbe50b88abcd3acc73a152d2b04ccc",
+    "reference.json": "3a8be97356649d5a6751c583712d303f5f4d69ce922c864185a5877dbc93d3ce",
+    "system.wav": "b818892ed26bb55efae0ff3f77c76d0d581452cec984457a05ebc1767d5570ec"
+   },
+   "gains_db": {
+    "A": 9.66,
+    "B": 3.48,
+    "C": 8.26,
+    "D": 4.71
+   },
+   "meeting": "IS1003b",
+   "mic_speaker": "C",
+   "split": "calibration"
+  },
+  "cal-ts3010a-negations": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "2278f63a7a4cd94218b9c9bc8676c1a7703f604c85cf245d963f14837d245b9c",
+    "mic.wav": "e258965b2d0ccf1ab1164293448736f13176306b6d49b44754c45110ef4fc7d6",
+    "mixed.wav": "c3f6df758628e8ab3f0452f239d85ebf45ef08d7755645fd1cd7f7984f041382",
+    "reference.json": "527e45877677b5e6c28b182f21de42027067970a8cedf7f9443c31e6e3fc7095",
+    "system.wav": "678001498160cbaf4ca82e0d90a3c6ce62b8b3c2a3b202f1075abf2dcd57fd13"
+   },
+   "gains_db": {
+    "A": 14.11,
+    "B": 18.12,
+    "C": 13.38,
+    "D": 7.96
+   },
+   "meeting": "TS3010a",
+   "mic_speaker": "B",
+   "split": "calibration"
+  },
+  "cal-ts3010a-sparse-long-turn": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "8fad61424c0867468aed128e21f56aa8e4d06b10febae89a8140cddb989d6f5d",
+    "mic.wav": "57414ea7a302c23cb3f3503a8e30b810eb694c8ad2e074d3231174ee60b164ee",
+    "mixed.wav": "d2b77a8beb99020fa6c48ed0b727a114e0eb254a0fde90b4fc31f1ae09667d8c",
+    "reference.json": "b684d1a1d8423ed41079213f3d594057b35f53fe9f91511de20c208dc4728c7e",
+    "system.wav": "cb6f16e52f2287b84c6654a5cccf3af04166dbea0846c2e6b114602b8c31195a"
+   },
+   "gains_db": {
+    "A": 14.11,
+    "B": 18.12,
+    "C": 13.38,
+    "D": 7.96
+   },
+   "meeting": "TS3010a",
+   "mic_speaker": "C",
+   "split": "calibration"
+  },
+  "smoke": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 39,
+    "mixed.wav": 160,
+    "system.wav": 121
+   },
+   "files": {
+    "meta.json": "dd470121e952da459ae49f6aceaae0feb04cb239208391084fbfd669c068255a",
+    "mic.wav": "581d57172c08b70e39e97ff4b67d884619411c0c6eb2da954437db769ab73409",
+    "mixed.wav": "f710120213bb78d1b2b5037d84ddd0d76651a4ea015c7e96c8a3cbff942cca7f",
+    "reference.json": "251ba09bb05ac7732f056831ecd208da457b4af342918d817028f05ea368b4d7",
+    "system.wav": "7f60f58d3768e0e3ee8deeab48e6a5ffc4f3fb7f6a9941d1a08d361590542eae"
+   },
+   "gains_db": {
+    "A": 9.07,
+    "B": 15.99,
+    "C": 11.23,
+    "D": 16.39
+   },
+   "meeting": "ES2011a",
+   "mic_speaker": "C",
+   "split": "smoke"
+  },
+  "soak": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 98,
+    "mixed.wav": 455,
+    "system.wav": 260
+   },
+   "files": {
+    "meta.json": "879eec6c54ca38264730b2ed43924e3ac6c1d2a3d6ae50bcb663b0dd9ec225f8",
+    "mic.wav": "3cb019db2b5e1cf214fe2ac310f683437d8b35772f97e5de68a3bb9b7f8ac6e6",
+    "mixed.wav": "90fc55f0da241095c38e9d7d9ecd7cf01482ef8875d78c038beab634888fac80",
+    "reference.json": "327a4df77fef61efa50d537d9029cc6aa30225cb38becf670a28da374f12ab64",
+    "system.wav": "3a435f85bdfeec8d53a81e51fdac0eb4c1aecd2ac35fc67d36975f2cab8d6e97"
+   },
+   "gains_db": {
+    "A": 12.88,
+    "B": 15.19,
+    "C": 2.8,
+    "D": 2.48
+   },
+   "meeting": "TS3006d",
+   "mic_speaker": "D",
+   "split": "soak"
+  },
+  "val-es2009a-fast-turns-names": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 280,
+    "mixed.wav": 1323,
+    "system.wav": 971
+   },
+   "files": {
+    "meta.json": "b566e2405ef90bf8abb547a3bb1a097ad248266683b5009fed2c29d09a9cee9d",
+    "mic.wav": "61da71210270df0a6266db90fcbfabd244a85ecec346b01ecc80afecb4e35317",
+    "mixed.wav": "1eb9e44af62cadd5edb52d9b35f08e3cea6de78c98bcbc11a115e4152f8bedc9",
+    "reference.json": "1b1cb2acfad0a23a757be5d0fb8abd54ec077cb4d4a7de4593538d6e635b3b24",
+    "system.wav": "52153b49edaa669ee7f5e0bf3813de308392f25046ad2f27da7734a7bd92d7d3"
+   },
+   "gains_db": {
+    "A": 10.98,
+    "B": 7.76,
+    "C": 12.04,
+    "D": 12.27
+   },
+   "meeting": "ES2009a",
+   "mic_speaker": "D",
+   "split": "validation"
+  },
+  "val-es2009a-long-turn": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 3,
+    "system.wav": 3
+   },
+   "files": {
+    "meta.json": "70a9fb389abb6e7cf70083b0b5c3245d4eadfa81bbadff4b4e918b03856430b3",
+    "mic.wav": "1ae229ec989f3c74ef3ff32b05e2d5a848c11b6a1d6e1485f7c5eaffb94ac14d",
+    "mixed.wav": "7e3277e4ada95425923c43a11c77977fa39654a67b23f8b997d1ad14e95674f1",
+    "reference.json": "cc12d1ced9c718701734f80eea41abfdccb8fec37b405f740352401f987e5d7d",
+    "system.wav": "6f5d88f3cd4f23e7c7ca909a009143787471e120aedfde4d57632b19dd328f6e"
+   },
+   "gains_db": {
+    "A": 10.98,
+    "B": 7.76,
+    "C": 12.04,
+    "D": 12.27
+   },
+   "meeting": "ES2009a",
+   "mic_speaker": "A",
+   "split": "validation"
+  },
+  "val-ib4003-names-negations": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "998b730fae1f66b6a4571b6190fce4ac74e76f9d181bcd2c33c901a30c0749de",
+    "mic.wav": "207e30feb2ccc0ba30aca351ed50d8b724ad74aacdd22d260192d548a5e1b874",
+    "mixed.wav": "9525cdcda5080de9d10b7c346ef2b4f2ad52806c8843397ea582d965d07bb700",
+    "reference.json": "52fea2b089c07b535943b07b51195421cb8269bc98894d2173422536430d1def",
+    "system.wav": "dd3599f2db40dbedb57b4e60d97e6e4f4e0c00660a78f2d25074159f1d063b38"
+   },
+   "gains_db": {
+    "A": -12.1,
+    "B": -5.31,
+    "C": -4.04,
+    "D": -6.44
+   },
+   "meeting": "IB4003",
+   "mic_speaker": "D",
+   "split": "validation"
+  },
+  "val-ib4003-numbers": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "f1a2a184a5b1e873061d2ced8d1ba0cb93a11be5887a7e5feedd3aa2efc48f1d",
+    "mic.wav": "ce088c7394166f28cb562de23e5f0c41b0a3809ee5e5f899cf8e4b1728c9a187",
+    "mixed.wav": "fbb2dc05650cdbef819d053d8951775bd3db2332aff0dc11ce6f5d9603ad3b8b",
+    "reference.json": "4c479cec2018703988829e83bb604af1350509b2f8a9ae5950bc672261551a3d",
+    "system.wav": "cf8e229ce2ed1f8a774e61c2abd56f247c40894fe143372695b8d82b220e3ee2"
+   },
+   "gains_db": {
+    "A": -12.1,
+    "B": -5.31,
+    "C": -4.04,
+    "D": -6.44
+   },
+   "meeting": "IB4003",
+   "mic_speaker": "A",
+   "split": "validation"
+  },
+  "val-ts3012a-long-turn": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "e7ddab47c7a4114ffd0cabec17f2d287317ede47bbe3be44b7a17f529b68ac89",
+    "mic.wav": "f098afbfc5eab6dfc78b9ba8028423e944c9305b74a281e6c05c5bb69e97acbd",
+    "mixed.wav": "9d9c79c0b2f42e5d557d4c2b4580b38858abe35d9307f2287ac0048f7e0c9d86",
+    "reference.json": "b05862c4b072630b05b5c362e797314481519e414b1ca2bc9ab1d09033e63766",
+    "system.wav": "2feeac02bd3c4d6aec6e596ca8253451fa1de3a274b79ed386ea4a7842f6bcaa"
+   },
+   "gains_db": {
+    "A": 11.26,
+    "B": 13.04,
+    "C": 11.89,
+    "D": 12.3
+   },
+   "meeting": "TS3012a",
+   "mic_speaker": "A",
+   "split": "validation"
+  },
+  "val-ts3012a-sparse": {
+   "channel_map": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 3
+   },
+   "clipped_samples": {
+    "mic.wav": 0,
+    "mixed.wav": 0,
+    "system.wav": 0
+   },
+   "files": {
+    "meta.json": "030fd97f279910c7a1f3088a7c565be75aaa512552d5ed063f23dd3a748f1356",
+    "mic.wav": "84a4407e1b7ea4efef8e84bb5612af71e2057b2bca4c4de8255e203554180c07",
+    "mixed.wav": "f3a142442e556b6665c591269a5859ffd219810587f23989953679056fd56e13",
+    "reference.json": "99a01ea0d347e4c04da115f92a7f32ccadf6c14e2270842255e081664348d1ce",
+    "system.wav": "5ac5acc0647984f615f2579afeac3a435449b38a1954f31f44e921680f1c8794"
+   },
+   "gains_db": {
+    "A": 11.26,
+    "B": 13.04,
+    "C": 11.89,
+    "D": 12.3
+   },
+   "meeting": "TS3012a",
+   "mic_speaker": "C",
+   "split": "validation"
+  }
+ },
+ "seed": 20261023,
+ "sources": {
+  "ami_public_manual_1.6.2.zip": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d",
+  "audio/ES2009a/ES2009a.Headset-0.wav": "ee344aec413cf135f6cca2f9dca98211bd0f7b8aa3cc8825d482b6111e4aec07",
+  "audio/ES2009a/ES2009a.Headset-1.wav": "9e86c7121ffc5c22939533c74d65aa00ca0bc765fb99722a95d904d6ab558d2a",
+  "audio/ES2009a/ES2009a.Headset-2.wav": "1be9dd1cca29ed45940a6914d5a04551f06d666d27b092bcfbf9d7212ddfef4f",
+  "audio/ES2009a/ES2009a.Headset-3.wav": "6e37e3906d49233dcf4fa30a55b55471b527dc56c027b7458c10ec58a706bbe2",
+  "audio/ES2011a/ES2011a.Headset-0.wav": "4950ebec42f08e3caaf8d038d9da9ceeda89ececb6dbc7f0f3bd25802e919fe9",
+  "audio/ES2011a/ES2011a.Headset-1.wav": "b3ccaeb285790058bb9ed598d56f61ff287c35ea4285d18701df227e20358fd1",
+  "audio/ES2011a/ES2011a.Headset-2.wav": "dcc7ad08eda75713281312a17f79cde2bc29fa169746a0b4e402a05f92ccdc78",
+  "audio/ES2011a/ES2011a.Headset-3.wav": "d95da41b5557f52aa985145a5aa446a85396c5cfd40f4464a1bdf6f580678066",
+  "audio/IB4003/IB4003.Headset-0.wav": "115d2a34806d04cc2a1b692836c762b372890e6ed3bdc4d086fbf0f7b39cb245",
+  "audio/IB4003/IB4003.Headset-1.wav": "bc353ac878f5474da01344f4754f4637e69603d836498f873ad0d225e38503e8",
+  "audio/IB4003/IB4003.Headset-2.wav": "7b50072c9c7d453b0b202be0c2443a88292e41488b1e4de25e75786046a14528",
+  "audio/IB4003/IB4003.Headset-3.wav": "fdccd187bf9436c05a398d52c3eb495f9492fc3e492a81312847de0c519035bd",
+  "audio/IS1003b/IS1003b.Headset-0.wav": "e61400523d49f8416287e225233a23f425a92f6c2d36e92fe9fddc8580f12cc1",
+  "audio/IS1003b/IS1003b.Headset-1.wav": "325efbc8d7743421786525d0e399a8de77c116a465071af1cde421758e57ac5b",
+  "audio/IS1003b/IS1003b.Headset-2.wav": "3576772733b55c1fdbfb7b81f47779f1c60b37847021671de183732ffb7117a7",
+  "audio/IS1003b/IS1003b.Headset-3.wav": "9a7586fe26072bd4516b533f3e807d40f9080283d7bb6ef50e0bb76cae7d2818",
+  "audio/TS3006d/TS3006d.Headset-0.wav": "f12605bf13368fbbff048ae2905192d27112f99fc33f8b49cd4ca1a7f2022964",
+  "audio/TS3006d/TS3006d.Headset-1.wav": "ede76c02d03cbd090748f013c820c4424b4e3989379a1efec621511d38d6f019",
+  "audio/TS3006d/TS3006d.Headset-2.wav": "1876f439aa9f61a931e1265817432a8d9d124faec7162fe8ee9b8c604812c830",
+  "audio/TS3006d/TS3006d.Headset-3.wav": "d21a3704ea8ccd4da87a4ed24b6cd3f8432048255768f2c9086b2e072411bd5c",
+  "audio/TS3010a/TS3010a.Headset-0.wav": "b018ad897b5d520e297f2d651dc51217812e2c61a7073b9cff4f498760f49106",
+  "audio/TS3010a/TS3010a.Headset-1.wav": "6a167f7323593640610a5d66c75421704bd1b44af5b274fb401fde690f115e92",
+  "audio/TS3010a/TS3010a.Headset-2.wav": "6ff9293a2db53d9d085e49fa48cc8a054b4ec2f4a432a3068d237c96953d0906",
+  "audio/TS3010a/TS3010a.Headset-3.wav": "ca94496be1111667534560da9f0d655dac72857bffd0e03af0d6f97329d7516f",
+  "audio/TS3012a/TS3012a.Headset-0.wav": "5130b9da262f7f1bbf154fd5dfe410d51ce72f446ceaa8b439a182665290c576",
+  "audio/TS3012a/TS3012a.Headset-1.wav": "6747fcde79b0de4128549199d2721a4ee0c451520cca68de5084287eddcdbdbc",
+  "audio/TS3012a/TS3012a.Headset-2.wav": "19284488ecdf41012c746bb1d966b1016ae4e1a449f44434bf0271a81322c31d",
+  "audio/TS3012a/TS3012a.Headset-3.wav": "496fabc718a7d3c967c33bae0ae6310847f1d9aa27c9ac98c00045111e98ce8e"
+ },
+ "speech_level_dbfs": -26.0,
+ "system_gating": {
+  "fade_seconds": 0.05,
+  "padding_seconds": 0.3,
+  "speech": "each other speaker's annotated words, truncated words included"
+ }
+}

@@ -282,14 +282,14 @@ public final class TranscriptionService {
     /// worker crashes (auto-relaunch), download failures (network transient), and
     /// `needsDownload` (state inconsistency). Non-retriable errors indicate
     /// permanent failures for the current audio (invalid input, model load issues).
-    private func mapEngineError(_ error: Error) -> (message: String, retriable: Bool) {
+    func mapEngineError(_ error: Error) -> (message: String, retriable: Bool) {
         guard let transcriptionError = error as? TranscriptionError else {
             return (error.localizedDescription, false)
         }
 
         switch transcriptionError {
-        case .workerInterrupted:
-            return ("Transcription worker stopped unexpectedly. Tap Retry.", true)
+        case .workerInterrupted, .cancelled, .workerBusy:
+            return (Self.workerRetryMessage(transcriptionError), true)
 
         case let .downloadFailed(detail):
             return ("Model download failed: \(detail)", true)
@@ -317,5 +317,17 @@ public final class TranscriptionService {
         case let .diarizationFailed(detail):
             return ("Speaker detection failed: \(detail)", false)
         }
+    }
+
+    /// The worker stopped this pass, or would not run it, before it finished;
+    /// running it again can succeed.
+    private static func workerRetryMessage(_ error: TranscriptionError) -> String {
+        if error == .workerBusy {
+            return "The transcription worker was busy. Tap Retry."
+        }
+        if error == .cancelled {
+            return "Transcription stopped before it finished. Tap Retry."
+        }
+        return "Transcription worker stopped unexpectedly. Tap Retry."
     }
 }

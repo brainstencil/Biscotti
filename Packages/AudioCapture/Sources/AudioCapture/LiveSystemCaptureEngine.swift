@@ -70,12 +70,17 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
     /// Encoder settings used for ADTS AAC file creation.
     private let encoder: EncoderSettings
 
+    /// The Core Audio calls that need a real process tap.
+    private let tapHardware: TapHardware
+
     init(
         permissionChecker: LiveSystemPermissionChecker = LiveSystemPermissionChecker(),
-        encoder: EncoderSettings = .voice
+        encoder: EncoderSettings = .voice,
+        tapHardware: TapHardware = .live
     ) {
         self.permissionChecker = permissionChecker
         self.encoder = encoder
+        self.tapHardware = tapHardware
     }
 
     /// Stores the mic's first-buffer host-clock anchor so the writer thread
@@ -109,7 +114,7 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         gapFillWriter.reset()
 
         do {
-            try createTapAndAggregate()
+            try tapHardware.create(self)
 
             #if DEBUG
                 if Self.verboseDiagnostics {
@@ -121,7 +126,7 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
             #endif
             try openAudioFile(url: url)
             startWriterThread()
-            try startIOProc()
+            try tapHardware.startIO(self, ringBuffer)
         } catch {
             // Partial-start cleanup. `startWriterThread()` launches a thread and
             // `openAudioFile()` opens the file *before* `startIOProc()`, so a
@@ -155,6 +160,11 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
     /// client format does not change: the writer converts every buffer to
     /// it (see `SystemFormatConverter`).
     ///
+    /// A failed attempt releases the hardware but keeps the recording: the
+    /// file stays open and `capturingFlag` stays set, so the next attempt (a
+    /// retry or a later route change) rebuilds the tap and `stop()` still
+    /// closes the file.
+    ///
     /// Leading silence is NOT re-written: alignment was established on
     /// the first buffer of the session.
     func reconnect() async throws {
@@ -167,10 +177,20 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         // fail intermittently because the device graph is mid-reconfiguration.
         try await Task.sleep(for: Self.reconnectSettleDelay)
 
-        do {
-            try createTapAndAggregate()
+        // A stop() during the settle delay ended the recording.
+        guard capturingFlag.load(ordering: .acquiring) else { return }
 
-            applyTapFormat(queryTapFormat())
+        do {
+            try tapHardware.create(self)
+
+            // Without the new tap's rate, its buffers would be read at the
+            // old one. Fail this attempt, like a failed tap creation, so the
+            // recorder retries it.
+            guard let tapFormat = usableTapFormat() else {
+                logger.warning("Reconnect: the new tap has no usable format")
+                throw CaptureError.tapCreationFailed(-2)
+            }
+            applyTapFormat(tapFormat)
 
             #if DEBUG
                 if Self.verboseDiagnostics {
@@ -182,15 +202,12 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
             #endif
 
             startWriterThread()
-            try startIOProc()
+            try tapHardware.startIO(self, ringBuffer)
         } catch {
             // Partial-reconnect cleanup: tear down any hardware and the
-            // writer thread that were created before the throw. Without
-            // this, a failed startIOProc() leaks a running writer
-            // thread and orphaned aggregate/tap, and the capturingFlag
-            // reset below prevents stop() from ever cleaning them up.
+            // writer thread created before the throw. The recording stays
+            // open (see above), so `capturingFlag` is left set.
             teardownHardware()
-            capturingFlag.store(false, ordering: .releasing)
             throw error
         }
     }
@@ -203,12 +220,8 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
     /// one after the first write (`-66565`).
     ///
     /// Internal so tests can simulate a reconnect without hardware.
-    func applyTapFormat(_ format: AudioStreamBasicDescription?) {
+    func applyTapFormat(_ format: AudioStreamBasicDescription) {
         let previousRate = tapSampleRate
-        guard let format else {
-            logger.warning("Reconnect: tap format query failed; keeping \(previousRate, privacy: .public) Hz")
-            return
-        }
         tapSampleRate = format.mSampleRate
         logger.notice(
             "Reconnect: tap format \(format.mSampleRate, privacy: .public) Hz \(format.mChannelsPerFrame, privacy: .public) ch (was \(previousRate, privacy: .public) Hz)"
@@ -551,10 +564,21 @@ extension LiveSystemCaptureEngine {
 
     /// Opens the recording's file for the tap that `start()` just created.
     private func openAudioFile(url: URL) throws {
-        guard let tapFormat = queryTapFormat() else {
+        guard let tapFormat = usableTapFormat() else {
             throw CaptureError.tapCreationFailed(-2)
         }
         try openAudioFile(url: url, tapSampleRate: tapFormat.mSampleRate)
+    }
+
+    /// The tap's format, or nil when it cannot be read or its rate is not a
+    /// positive finite number. Every buffer duration is computed from the
+    /// rate, and the integer conversions of those durations trap on an
+    /// infinite or NaN value.
+    private func usableTapFormat() -> AudioStreamBasicDescription? {
+        guard let format = tapHardware.format(self),
+              format.mSampleRate.isFinite, format.mSampleRate > 0
+        else { return nil }
+        return format
     }
 
     /// Creates the ADTS AAC file and sets its client format once, before
@@ -615,6 +639,29 @@ extension LiveSystemCaptureEngine {
         let status = AudioObjectGetPropertyData(tapObjectID, &address, 0, nil, &size, &format)
         guard status == noErr else { return nil }
         return format
+    }
+}
+
+// MARK: - Hardware seam
+
+extension LiveSystemCaptureEngine {
+    /// The calls that need a real process tap. Production uses `live`; tests
+    /// replace them to run `start()`, `reconnect()` and `stop()`, with the
+    /// real writer thread and file, on a machine without a tap.
+    struct TapHardware {
+        /// Creates the process tap and its aggregate device.
+        var create: @Sendable (LiveSystemCaptureEngine) throws -> Void
+        /// Reads the tap's stream format, or nil if the query fails.
+        var format: @Sendable (LiveSystemCaptureEngine) -> AudioStreamBasicDescription?
+        /// Starts the IOProc that enqueues tap buffers into the ring buffer.
+        var startIO: @Sendable (LiveSystemCaptureEngine, AudioRingBuffer) throws -> Void
+
+        /// The Core Audio implementation.
+        static let live = TapHardware(
+            create: { try $0.createTapAndAggregate() },
+            format: { $0.queryTapFormat() },
+            startIO: { engine, _ in try engine.startIOProc() }
+        )
     }
 }
 

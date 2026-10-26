@@ -7,12 +7,14 @@ import DesignSystem
 import Formatting
 import Foundation
 import Intelligence
+import LiveTranscriptModel
 import SummaryPromptUI
 import TranscriptionService
+import TranscriptUI
 import Vocabulary
 import VoiceprintMatching
 
-/// The three display states of the Meeting Detail screen.
+/// The display states of the Meeting Detail screen.
 public enum MeetingDetailState: Sendable, Equatable {
     /// Model download or transcription is in progress. `subtitle` carries
     /// the engine's live status message (e.g. download progress) when available.
@@ -23,6 +25,20 @@ public enum MeetingDetailState: Sendable, Equatable {
 
     /// The job failed; the user may retry if `retriable` is true.
     case failed(message: String, retriable: Bool)
+
+    /// No saved transcript is shown yet; the live transcript stands in for it.
+    case draft(LiveTranscriptSnapshot, DraftStatus)
+}
+
+/// What the status row above a draft says.
+public enum DraftStatus: Sendable, Equatable {
+    /// "Draft · final transcript in progress".
+    case finalPassInProgress
+    /// "Draft · final transcript ready": the final transcript is saved, and
+    /// the swap waits while text is selected in the list.
+    case finalTranscriptReady
+    /// The final pass failed: the draft stays, with today's error and Retry.
+    case finalPassFailed(message: String, retriable: Bool)
 }
 
 /// View model for the Meeting Detail screen.
@@ -40,6 +56,7 @@ public final class MeetingDetailViewModel {
     public let meetingID: UUID
     private let vocabulary: VocabularyService
     private let makePlayer: () -> any AudioPlaybackProviding
+    private let liveDrafts: LiveDraftSource
 
     /// Injectable "now" for deterministic testing of time-gated UI.
     private let currentDate: () -> Date
@@ -245,18 +262,48 @@ public final class MeetingDetailViewModel {
     /// Debounce interval for summary autosave.
     private static let summaryDebounceInterval: Duration = .seconds(1)
 
+    // MARK: - Bubble transcript and live draft
+
+    /// Every person a calendar snapshot marks as the current user. Their
+    /// speakers sit on the "You" side of saved transcripts.
+    public private(set) var currentUserPersonIDs: Set<UUID> = []
+
+    /// The draft on screen. Kept after the live source releases it, until
+    /// the final transcript is shown (the visible swap can wait; the final
+    /// transcript is already saved).
+    public private(set) var shownDraft: LiveTranscriptSnapshot?
+
+    /// Whether keyboard focus, such as a text selection, is inside the
+    /// transcript list. The swap to the final transcript waits while it is.
+    public private(set) var isTranscriptListFocused = false
+
+    /// Bound to the list's `revealTime`: after the swap, the list scrolls to
+    /// the item holding this time once, then clears it.
+    public var transcriptRevealTime: TimeInterval?
+
+    /// Bound to the list's `anchorTime`: the start time of the topmost
+    /// visible item. Ignored by observation, because it changes as the
+    /// reader scrolls and nothing on screen depends on it.
+    @ObservationIgnored public var draftAnchorTime: TimeInterval?
+
+    @ObservationIgnored private var savedItemsCache: (key: SavedItemsKey, items: [TranscriptItem])?
+    @ObservationIgnored private var draftItemsCache: (snapshot: LiveTranscriptSnapshot, items: [TranscriptItem])?
+
+    /// - Parameter liveDrafts: Live drafts; none by default.
     public init(
         core: AppCore,
         meetingID: UUID,
         makePlayer: @escaping () -> any AudioPlaybackProviding
             = { AVAudioPlayerWrapper() },
         currentDate: @escaping () -> Date = { Date() },
-        urlOpener: @escaping (URL) -> Void = { _ in }
+        urlOpener: @escaping (URL) -> Void = { _ in },
+        liveDrafts: LiveDraftSource = .none
     ) {
         self.core = core
         self.meetingID = meetingID
         vocabulary = VocabularyService(store: core.store)
         self.makePlayer = makePlayer
+        self.liveDrafts = liveDrafts
         self.currentDate = currentDate
         self.urlOpener = urlOpener
     }
@@ -290,6 +337,7 @@ public final class MeetingDetailViewModel {
             detail = nil
             calendarContext = nil
         }
+        syncDraft()
         isLoading = false
     }
 
@@ -304,6 +352,7 @@ public final class MeetingDetailViewModel {
             } catch {
                 // Non-fatal.
             }
+            syncDraft()
             await core.reloadSummaries()
         }
     }
@@ -350,16 +399,10 @@ public final class MeetingDetailViewModel {
         syncPlaybackState()
     }
 
-    /// Copies the displayed transcript to the system pasteboard as plain text.
+    /// Copies what the Transcript tab shows to the system pasteboard as
+    /// plain text: the draft while one is shown, else the displayed transcript.
     public func copyTranscript() {
-        guard let transcript = displayedTranscript,
-              !transcript.segments.isEmpty
-        else { return }
-
-        let text = TranscriptTextFormatting.render(
-            transcript.segments,
-            names: displayedSpeakerNames
-        )
+        guard let text = transcriptCopyText else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
@@ -463,6 +506,10 @@ public extension MeetingDetailViewModel {
     var displayState: MeetingDetailState {
         let jobStatus = core.transcription.jobs[meetingID]
 
+        if let shownDraft {
+            return .draft(shownDraft, draftStatus(for: jobStatus))
+        }
+
         switch jobStatus {
         case let .downloadingModel(message):
             return .processing(
@@ -489,9 +536,46 @@ public extension MeetingDetailViewModel {
         }
     }
 
+    /// The live source's current draft for this meeting. The view watches
+    /// it and calls ``syncDraft()`` when it changes.
+    var liveDraft: LiveTranscriptSnapshot? {
+        liveDrafts.draft(meetingID)
+    }
+
+    private func draftStatus(for jobStatus: JobStatus?) -> DraftStatus {
+        if detail?.preferredTranscript != nil {
+            return .finalTranscriptReady
+        }
+        switch jobStatus {
+        case let .failed(message, retriable):
+            return .finalPassFailed(message: message, retriable: retriable)
+        default:
+            return .finalPassInProgress
+        }
+    }
+
     /// The current transcription job status for this meeting.
     var currentJobStatus: JobStatus? {
         core.transcription.jobs[meetingID]
+    }
+
+    /// The plain text Copy puts on the pasteboard: the shown draft ("You:"
+    /// and "Others:" lines) until the swap, else the displayed transcript.
+    var transcriptCopyText: String? {
+        if let shownDraft {
+            let text = LiveTranscriptText.render(shownDraft.rows)
+            return text.isEmpty ? nil : text
+        }
+        guard let transcript = displayedTranscript, !transcript.segments.isEmpty else { return nil }
+        return TranscriptTextFormatting.render(transcript.segments, names: displayedSpeakerNames)
+    }
+
+    /// Whether Copy has something to copy on the Transcript tab.
+    var hasCopyableTranscript: Bool {
+        if let shownDraft {
+            return !shownDraft.rows.isEmpty
+        }
+        return hasDisplayableTranscript
     }
 
     /// Whether the Re-transcribe action should be enabled.
@@ -617,9 +701,9 @@ public extension MeetingDetailViewModel {
     }
 
     /// Speaker ID -> display name map derived from the displayed
-    /// transcript's speaker assignments. Passed to `TranscriptListView`
-    /// (and `TranscriptTextFormatting`) for name replacement in each row
-    /// and for the view's `Equatable` re-render trigger.
+    /// transcript's speaker assignments. Passed to `TranscriptItemBuilder.saved`
+    /// (and `TranscriptTextFormatting`) for name replacement in each bubble
+    /// and in copied text.
     var displayedSpeakerNames: [Int: String] {
         displayedTranscript?.speakerAssignments.mapValues(\.name) ?? [:]
     }
@@ -1137,6 +1221,7 @@ private extension MeetingDetailViewModel {
         catalogueTags = try await core.store.allTags()
         let settings = try? await core.store.settings()
         aiAnalysisEnabled = settings?.aiAnalysisEnabled ?? true
+        currentUserPersonIDs = await (try? core.store.currentUserPersonIDs()) ?? []
     }
 
     func loadAudioPlayer() async {
@@ -1831,5 +1916,105 @@ public extension MeetingDetailViewModel {
         } catch {
             // Non-fatal
         }
+    }
+}
+
+// MARK: - Bubble transcript and draft-to-final swap
+
+/// What the saved transcript's items depend on.
+struct SavedItemsKey: Equatable {
+    var transcriptID: UUID
+    var speakerAssignments: [Int: PersonData]
+    var currentUserPersonIDs: Set<UUID>
+}
+
+public extension MeetingDetailViewModel {
+    /// The items of the transcript list: the shown draft, else the displayed
+    /// saved transcript.
+    var bubbleListItems: [TranscriptItem] {
+        if case let .draft(snapshot, _) = displayState {
+            return draftItems(for: snapshot)
+        }
+        return transcriptItems
+    }
+
+    /// The displayed saved transcript as bubbles. Cached, because the view
+    /// re-renders about 4 times a second during playback.
+    var transcriptItems: [TranscriptItem] {
+        guard let transcript = displayedTranscript else { return [] }
+        let key = SavedItemsKey(
+            transcriptID: transcript.id,
+            speakerAssignments: transcript.speakerAssignments,
+            currentUserPersonIDs: currentUserPersonIDs
+        )
+        if let cache = savedItemsCache, cache.key == key { return cache.items }
+        let items = TranscriptItemBuilder.saved(
+            segments: transcript.segments,
+            names: displayedSpeakerNames,
+            colorKeys: displayedSpeakerColorKeys,
+            speakerPersons: transcript.speakerAssignments.mapValues(\.id),
+            currentUserPersonIDs: currentUserPersonIDs
+        )
+        savedItemsCache = (key, items)
+        return items
+    }
+
+    /// Adopts the live source's draft while no saved transcript exists, then
+    /// swaps to the final transcript if it can.
+    func syncDraft() {
+        if detail?.preferredTranscript == nil, let draft = liveDraft {
+            shownDraft = draft
+        }
+        swapToFinalIfReady()
+    }
+
+    /// The transcript list's focus probe reports focus here. Focus leaving
+    /// the list lets a waiting swap happen.
+    func setTranscriptListFocused(_ focused: Bool) {
+        guard focused != isTranscriptListFocused else { return }
+        isTranscriptListFocused = focused
+        swapToFinalIfReady()
+    }
+
+    /// Called when the selected tab changes. Leaving the Transcript tab
+    /// removes the list, and with it any focus inside it.
+    func transcriptTabSelectionChanged() {
+        if selectedTab != .transcript {
+            isTranscriptListFocused = false
+        }
+        swapToFinalIfReady()
+    }
+
+    private func draftItems(for snapshot: LiveTranscriptSnapshot) -> [TranscriptItem] {
+        if let cache = draftItemsCache, cache.snapshot == snapshot { return cache.items }
+        let items = TranscriptItemBuilder.live(
+            rows: snapshot.rows,
+            gaps: snapshot.gaps,
+            startMarker: nil,
+            labelStyle: .youOthers
+        )
+        draftItemsCache = (snapshot, items)
+        return items
+    }
+
+    /// Replaces the shown draft with the saved transcript, unless focus is
+    /// inside the list (a selection would be lost). The reader lands on the
+    /// bubble holding the time that was at the top of the draft.
+    /// TODO(draft swap): in the phase 11 hardware review (live_transcript
+    /// phase_11.md, Open items), a swap from a draft that was never scrolled
+    /// left the tab at about 1:26 with its header scrolled off;
+    /// `draftAnchorTime` should be nil there. Reproduce it with the list's
+    /// scroll offsets logged.
+    private func swapToFinalIfReady() {
+        guard shownDraft != nil,
+              detail?.preferredTranscript != nil,
+              !isTranscriptListFocused
+        else { return }
+        shownDraft = nil
+        draftItemsCache = nil
+        if let anchor = draftAnchorTime {
+            transcriptRevealTime = anchor
+        }
+        draftAnchorTime = nil
     }
 }

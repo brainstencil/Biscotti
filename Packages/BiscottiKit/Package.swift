@@ -18,6 +18,7 @@ let package = Package(
         .library(name: "MeetingListUI", targets: ["MeetingListUI"]),
         .library(name: "RecordingUI", targets: ["RecordingUI"]),
         .library(name: "MeetingDetailUI", targets: ["MeetingDetailUI"]),
+        .library(name: "TranscriptUI", targets: ["TranscriptUI"]),
         .library(name: "AppShellUI", targets: ["AppShellUI"]),
         .library(name: "Calendar", targets: ["Calendar"]),
         .library(name: "MeetingCatalog", targets: ["MeetingCatalog"]),
@@ -301,6 +302,26 @@ let package = Package(
             swiftSettings: warningsAsErrors
         ),
         .target(
+            name: "TranscriptUI",
+            dependencies: [
+                "DataStore",
+                "DesignSystem",
+                "Formatting",
+                .product(name: "LiveTranscriptModel", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "TranscriptUITests",
+            dependencies: [
+                "TranscriptUI",
+                "DataStore",
+                "DesignSystem",
+                .product(name: "LiveTranscriptModel", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
             name: "MeetingDetailUI",
             dependencies: [
                 "AppCore",
@@ -313,8 +334,10 @@ let package = Package(
                 "MarkdownEditorUI",
                 "SummaryPromptUI",
                 "TranscriptionService",
+                "TranscriptUI",
                 "VoiceprintMatching",
-                "Vocabulary"
+                "Vocabulary",
+                .product(name: "LiveTranscriptModel", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
         ),
@@ -333,9 +356,11 @@ let package = Package(
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
+                "TranscriptUI",
                 "VoiceprintMatching",
                 "Vocabulary",
                 .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "LocalLLM", package: "LocalLLM"),
                 .product(name: "Transcription", package: "Transcription")
             ],

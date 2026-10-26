@@ -1,6 +1,7 @@
 import BiscottiTestSupport
 import DataStore
 import Foundation
+import LiveTranscriptionService
 import LiveTranscriptModel
 import Testing
 import Transcription
@@ -207,6 +208,60 @@ struct MeetingDetailDraftTests {
         #expect(context.viewModel.transcriptCopyText == nil)
     }
 
+    @Test("a draft waiting for a recording says so")
+    func waitingStatusWhileRecording() async throws {
+        let context = try await makeContext()
+        defer { context.fix.cleanup() }
+        context.fix.core.transcription.jobs[context.meetingID] = .queued(.waitingForRecording)
+
+        await context.viewModel.load()
+
+        guard case let .draft(_, status) = context.viewModel.displayState else {
+            Issue.record("Expected a draft, got \(context.viewModel.displayState)")
+            return
+        }
+        #expect(status == .waitingForRecording)
+    }
+
+    @Test("without a draft, a waiting meeting shows the waiting state")
+    func waitingWithoutDraft() async throws {
+        let context = try await makeContext(draft: nil)
+        defer { context.fix.cleanup() }
+        context.fix.core.transcription.jobs[context.meetingID] = .queued(.waitingForRecording)
+
+        await context.viewModel.load()
+
+        #expect(context.viewModel.displayState == .waitingForRecording)
+        #expect(!context.viewModel.canReTranscribe)
+    }
+
+    @Test("a meeting waiting for another meeting's pass says it waits to transcribe")
+    func queuedForTurnShowsWaitingToTranscribe() async throws {
+        let context = try await makeContext(draft: nil)
+        defer { context.fix.cleanup() }
+        context.fix.core.transcription.jobs[context.meetingID] = .queued(.waitingForTurn)
+
+        await context.viewModel.load()
+
+        #expect(context.viewModel.displayState == .processing(message: "Waiting to transcribe\u{2026}"))
+        #expect(!context.viewModel.canReTranscribe)
+    }
+
+    @Test("a draft waiting for another meeting's pass shows the final pass in progress")
+    func draftQueuedForTurnShowsFinalPassInProgress() async throws {
+        let context = try await makeContext()
+        defer { context.fix.cleanup() }
+        context.fix.core.transcription.jobs[context.meetingID] = .queued(.waitingForTurn)
+
+        await context.viewModel.load()
+
+        guard case let .draft(_, status) = context.viewModel.displayState else {
+            Issue.record("Expected a draft, got \(context.viewModel.displayState)")
+            return
+        }
+        #expect(status == .finalPassInProgress)
+    }
+
     @Test("a failed final pass keeps the draft with the error")
     func failedFinalPassKeepsDraft() async throws {
         let context = try await makeContext()
@@ -270,5 +325,43 @@ struct MeetingDetailDraftTests {
         let bubbles = viewModel.bubbleListItems.compactMap(\.bubble)
         #expect(bubbles.map(\.side) == [.leading, .leading])
         #expect(bubbles.map(\.label?.name) == ["Speaker 0", "Speaker 1"])
+    }
+}
+
+@Suite("MeetingDetailViewModel -- live draft source")
+@MainActor
+struct MeetingDetailLiveDraftSourceTests {
+    @Test("by default the view model reads the live service, and a completed pass releases its draft")
+    func defaultSourceReadsTheLiveService() async throws {
+        let engines = FakeLiveEngineFactory()
+        let live = makeFakeLiveService(engines: engines)
+        let fix = try makeCoreFixture(liveTranscription: live, testName: "MeetingDetailUITests")
+        defer { fix.cleanup() }
+        let meetingID = try await fix.createMeetingWithAudio()
+        let tap = ScriptedTap()
+        await live.start(meetingID: meetingID, tap: tap, timelineOffset: 0)
+        try await waitUntil("a live engine") { engines.engines.count == 1 }
+        let engine = engines.engines[0]
+        try await waitUntil("its config") { await engine.config != nil }
+        await engine.emit(liveUpdate(.mic, rows: [youRow], transcribedThrough: 7, settledThrough: 6))
+        try await waitUntil("the live row") { !live.rows.isEmpty }
+        let finishing = live.stop(meetingID)
+
+        let viewModel = MeetingDetailViewModel(core: fix.core, meetingID: meetingID)
+        fix.core.transcription.jobs[meetingID] = .transcribing
+        await viewModel.load()
+        guard case let .draft(snapshot, _) = viewModel.displayState else {
+            Issue.record("Expected a draft, got \(viewModel.displayState)")
+            return
+        }
+        #expect(snapshot.rows == [youRow])
+
+        let transcriptID = try await fix.store.addTranscript(FakeTranscriber.defaultResult, vocabularyUsed: [], mappedEventIdentifier: nil, to: meetingID)
+        try await fix.store.setPreferredTranscript(transcriptID, for: meetingID)
+        fix.core.transcription.jobs[meetingID] = .completed
+        await viewModel.onJobStatusChange(.completed)
+        #expect(live.draft(for: meetingID) == nil)
+        tap.end(at: 7)
+        _ = await finishing.value
     }
 }

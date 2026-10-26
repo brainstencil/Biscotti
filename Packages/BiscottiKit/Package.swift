@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "Permissions", targets: ["Permissions"]),
         .library(name: "Recording", targets: ["Recording"]),
         .library(name: "TranscriptionService", targets: ["TranscriptionService"]),
+        .library(name: "LiveTranscriptionService", targets: ["LiveTranscriptionService"]),
         .library(name: "AppLinks", targets: ["AppLinks"]),
         .library(name: "AppCore", targets: ["AppCore"]),
         .library(name: "MeetingListUI", targets: ["MeetingListUI"]),
@@ -162,6 +163,28 @@ let package = Package(
             swiftSettings: warningsAsErrors
         ),
         .target(
+            name: "LiveTranscriptionService",
+            dependencies: [
+                .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscription", package: "Transcription"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "Transcription", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "LiveTranscriptionServiceTests",
+            dependencies: [
+                "LiveTranscriptionService",
+                "BiscottiTestSupport",
+                .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LiveTranscription", package: "Transcription"),
+                .product(name: "Transcription", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
             name: "AppLinks",
             swiftSettings: warningsAsErrors
         ),
@@ -177,6 +200,7 @@ let package = Package(
                 "DataStore",
                 "ImportExport",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MCPServer",
                 "Permissions",
                 "Recording",
@@ -203,6 +227,7 @@ let package = Package(
                 "Calendar",
                 "DataStore",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
                 "MeetingDetection",
@@ -212,6 +237,7 @@ let package = Package(
                 "TranscriptionService",
                 "Vocabulary",
                 .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "LocalLLM", package: "LocalLLM"),
                 .product(name: "Transcription", package: "Transcription")
             ],
@@ -230,6 +256,7 @@ let package = Package(
                 "Formatting",
                 "ImportExport",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
                 "MeetingDetailUI",
@@ -239,6 +266,7 @@ let package = Package(
                 "Recording",
                 "TranscriptionService",
                 .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "Transcription", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
@@ -279,8 +307,11 @@ let package = Package(
                 "Calendar",
                 "DataStore",
                 "DesignSystem",
+                "LiveTranscriptionService",
                 "Permissions",
-                "Recording"
+                "Recording",
+                "TranscriptUI",
+                .product(name: "LiveTranscriptModel", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
         ),
@@ -292,11 +323,14 @@ let package = Package(
                 "BiscottiTestSupport",
                 "Calendar",
                 "DataStore",
+                "LiveTranscriptionService",
                 "MeetingDetection",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
+                "TranscriptUI",
                 .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "Transcription", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
@@ -331,6 +365,7 @@ let package = Package(
                 "DesignSystem",
                 "Formatting",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MarkdownEditorUI",
                 "SummaryPromptUI",
                 "TranscriptionService",
@@ -352,6 +387,7 @@ let package = Package(
                 "DataStore",
                 "Formatting",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MeetingCatalog",
                 "Permissions",
                 "Recording",
@@ -404,6 +440,7 @@ let package = Package(
                 "DesignSystem",
                 "Formatting",
                 "HomeUI",
+                "LiveTranscriptionService",
                 "MeetingListUI",
                 "MeetingDetailUI",
                 "OnboardingUI",
@@ -422,11 +459,13 @@ let package = Package(
                 "Calendar",
                 "DataStore",
                 "HomeUI",
+                "LiveTranscriptionService",
                 "MeetingCatalog",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
                 .product(name: "AudioCapture", package: "AudioCapture"),
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "Transcription", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
@@ -457,6 +496,7 @@ let package = Package(
                 "DesignSystem",
                 "ImportExport",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "LocalLLM",
                 "MCPServer",
                 "ModelManagementUI",
@@ -476,6 +516,7 @@ let package = Package(
                 "DataStore",
                 "ImportExport",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
                 "MeetingDetection",
@@ -527,6 +568,7 @@ let package = Package(
                 "DataStore",
                 "DesignSystem",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "ModelManagementUI",
                 "Permissions",
                 "TranscriptionService",
@@ -543,6 +585,7 @@ let package = Package(
                 "Calendar",
                 "DataStore",
                 "Intelligence",
+                "LiveTranscriptionService",
                 "MeetingCatalog",
                 "Permissions",
                 "Recording",

@@ -7,6 +7,7 @@ import DesignSystem
 import Formatting
 import Foundation
 import Intelligence
+import LiveTranscriptionService
 import LiveTranscriptModel
 import SummaryPromptUI
 import TranscriptionService
@@ -28,6 +29,10 @@ public enum MeetingDetailState: Sendable, Equatable {
 
     /// No saved transcript is shown yet; the live transcript stands in for it.
     case draft(LiveTranscriptSnapshot, DraftStatus)
+
+    /// No transcript and no draft: the final pass waits for the current
+    /// recording to stop.
+    case waitingForRecording
 }
 
 /// What the status row above a draft says.
@@ -37,6 +42,8 @@ public enum DraftStatus: Sendable, Equatable {
     /// "Draft · final transcript ready": the final transcript is saved, and
     /// the swap waits while text is selected in the list.
     case finalTranscriptReady
+    /// "Waiting to finish until the current recording stops".
+    case waitingForRecording
     /// The final pass failed: the draft stays, with today's error and Retry.
     case finalPassFailed(message: String, retriable: Bool)
 }
@@ -289,7 +296,7 @@ public final class MeetingDetailViewModel {
     @ObservationIgnored private var savedItemsCache: (key: SavedItemsKey, items: [TranscriptItem])?
     @ObservationIgnored private var draftItemsCache: (snapshot: LiveTranscriptSnapshot, items: [TranscriptItem])?
 
-    /// - Parameter liveDrafts: Live drafts; none by default.
+    /// - Parameter liveDrafts: Live drafts; nil reads `core.liveTranscription`.
     public init(
         core: AppCore,
         meetingID: UUID,
@@ -297,13 +304,13 @@ public final class MeetingDetailViewModel {
             = { AVAudioPlayerWrapper() },
         currentDate: @escaping () -> Date = { Date() },
         urlOpener: @escaping (URL) -> Void = { _ in },
-        liveDrafts: LiveDraftSource = .none
+        liveDrafts: LiveDraftSource? = nil
     ) {
         self.core = core
         self.meetingID = meetingID
         vocabulary = VocabularyService(store: core.store)
         self.makePlayer = makePlayer
-        self.liveDrafts = liveDrafts
+        self.liveDrafts = liveDrafts ?? .live(core.liveTranscription)
         self.currentDate = currentDate
         self.urlOpener = urlOpener
     }
@@ -344,6 +351,9 @@ public final class MeetingDetailViewModel {
     /// Called when the transcription job status changes for this meeting.
     public func onJobStatusChange(_ newStatus: JobStatus?) async {
         if newStatus == .completed {
+            // The final transcript replaces the draft; the view keeps showing
+            // it until the swap.
+            core.liveTranscription.releaseDraft(for: meetingID)
             do {
                 detail = try await core.store.meetingDetail(id: meetingID)
                 versions = detail?.versions ?? []
@@ -517,7 +527,13 @@ public extension MeetingDetailViewModel {
             )
 
         case .transcribing:
-            return .processing(message: "Transcribing\u{2026}")
+            return .processing(message: "Transcribing\u{2026}", subtitle: slowLoadNote)
+
+        case .queued(.waitingForRecording):
+            return .waitingForRecording
+
+        case .queued(.waitingForTurn):
+            return .processing(message: "Waiting to transcribe\u{2026}")
 
         case let .failed(message, retriable):
             return .failed(message: message, retriable: retriable)
@@ -549,9 +565,17 @@ public extension MeetingDetailViewModel {
         switch jobStatus {
         case let .failed(message, retriable):
             return .finalPassFailed(message: message, retriable: retriable)
+        case .queued(.waitingForRecording):
+            return .waitingForRecording
         default:
             return .finalPassInProgress
         }
+    }
+
+    /// While this meeting's final pass loads its model slowly because the
+    /// disk is low, says so under its status.
+    var slowLoadNote: String? {
+        core.transcription.slowModelLoadOnLowDisk == meetingID ? SlowModelLoad.finalPassStatus : nil
     }
 
     /// The current transcription job status for this meeting.
@@ -583,7 +607,7 @@ public extension MeetingDetailViewModel {
         guard let detail, detail.hasAudio else { return false }
         let jobStatus = core.transcription.jobs[meetingID]
         switch jobStatus {
-        case .downloadingModel, .transcribing:
+        case .downloadingModel, .transcribing, .queued:
             return false
         default:
             return true
@@ -737,7 +761,7 @@ public extension MeetingDetailViewModel {
         // Pipeline is active when transcription is downloading/transcribing
         // OR an enhancement is in progress (including .preparing).
         let transcriptionActive = switch jobStatus {
-        case .downloadingModel, .transcribing: true
+        case .downloadingModel, .transcribing, .queued: true
         default: false
         }
         let enhancementActive = switch enhStatus {

@@ -22,7 +22,7 @@ import TranscriptUI
 ///    scrolls together with no nested scroll views.
 ///
 /// 2. **ScrollView path** -- for the Notes tab and non-ready transcript
-///    states (processing / failed / empty / not-transcribed). A single
+///    states (processing / failed / waiting / empty / not-transcribed). A single
 ///    outer `ScrollView` wraps chrome + tab content as before.
 ///
 /// The audio transport bar is pinned to the bottom of the panel via
@@ -271,7 +271,7 @@ public struct MeetingDetailView: View {
             return true
         case .transcript:
             return viewModel.hasDisplayableTranscript && viewModel.activeVersionID != nil
-        case .processing, .failed:
+        case .processing, .failed, .waitingForRecording:
             return false
         }
     }
@@ -943,11 +943,18 @@ private extension MeetingDetailView {
             failedContent(message: message, retriable: retriable)
                 .frame(height: fill)
 
+        case .waitingForRecording:
+            StatusRow(Self.waitingMessage, style: .caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: fill, alignment: .top)
+
         case .draft:
             // Drafts always take the list layout (`useTranscriptListLayout`).
             EmptyView()
         }
     }
+
+    static let waitingMessage = "Waiting to finish until the current recording stops"
 
     /// Centered transcribing state: large spinner, larger centered text,
     /// optional subtitle on its own centered line. Explicit center-alignment
@@ -1035,9 +1042,11 @@ private extension MeetingDetailView {
     private func draftStatus(_ status: DraftStatus) -> some View {
         switch status {
         case .finalPassInProgress:
-            StatusRow("Draft \u{00B7} final transcript in progress", style: .caption)
+            StatusRow("Draft \u{00B7} final transcript in progress", subtitle: viewModel.slowLoadNote, style: .caption)
         case .finalTranscriptReady:
             StatusRow("Draft \u{00B7} final transcript ready", isProgress: false, style: .caption)
+        case .waitingForRecording:
+            StatusRow(Self.waitingMessage, style: .caption)
         case let .finalPassFailed(message, retriable):
             VStack(alignment: .leading, spacing: Tokens.spacingSM) {
                 Banner(

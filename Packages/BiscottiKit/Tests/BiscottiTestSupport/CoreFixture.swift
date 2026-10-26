@@ -4,6 +4,7 @@ import Calendar
 import DataStore
 import Foundation
 import Intelligence
+import LiveTranscriptionService
 import LocalLLM
 import MCPServer
 import MeetingCatalog
@@ -499,6 +500,7 @@ public func makeCoreFixture(
     hardwareRAMBytes: UInt64 = 32_000_000_000,
     hardwareDiskBytes: Int64? = 100_000_000_000,
     mcpServerPort: Int = 0,
+    liveTranscription: LiveTranscriptionService? = nil,
     testName: String = "Test"
 ) throws -> CoreFixture {
     let store = try DataStore(storage: .inMemory)
@@ -535,7 +537,9 @@ public func makeCoreFixture(
     let fakeEngine = FakeTranscriber()
     let transcription = TranscriptionService(
         store: store, engine: fakeEngine,
-        vocabulary: VocabularyService(store: store)
+        vocabulary: VocabularyService(store: store),
+        // The fixture's disk, so a test never reads this Mac's free space.
+        diskSpace: DiskSpace { hardwareDiskBytes }
     )
 
     let fakeEventStore = FakeEventStore(
@@ -619,7 +623,8 @@ public func makeCoreFixture(
         intelligence: intelligence,
         modelManager: modelManager,
         scheduler: scheduler,
-        mcpServer: MCPServerController(store: store, port: mcpServerPort)
+        mcpServer: MCPServerController(store: store, port: mcpServerPort),
+        liveTranscription: liveTranscription
     )
 
     return CoreFixture(

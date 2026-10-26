@@ -67,6 +67,11 @@ struct WhisperLiveSessionLifecycleTests {
         try await session.start(config())
         await #expect(throws: LiveSessionError.alreadyStarted) { try await session.start(config()) }
 
+        var analyzer = config()
+        analyzer.engine = .speechAnalyzer
+        await #expect(throws: LiveSessionError.unsupportedEngine(.speechAnalyzer)) {
+            try await WhisperLiveSession(decoder: decoder).start(analyzer)
+        }
         for tracks: [LiveTrack] in [[], [.mic], [.mic, .mic], [.mixed, .mic]] {
             await #expect(throws: LiveSessionError.unsupportedTracks(tracks)) {
                 try await WhisperLiveSession(decoder: decoder).start(config(tracks: tracks))

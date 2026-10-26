@@ -20,6 +20,8 @@ struct MethodResolutionTests {
         #expect(options.detectLanguage == settings.detectLanguage)
         #expect(options.wordTimestamps == settings.enableWordTimestamps)
         #expect(options.promptTokens == nil)
+        #expect(TranscriptionMethod.current.whisperDecodingOptions.detectLanguage == options.detectLanguage)
+        #expect(TranscriptionMethod.current.whisperDecodingOptions.wordTimestamps == options.wordTimestamps)
     }
 
     // MARK: - RAM-aware resolution (now internal to the method resolver)

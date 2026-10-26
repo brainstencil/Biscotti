@@ -13,7 +13,8 @@ let package = Package(
         .library(name: "LiveTranscriptModel", targets: ["LiveTranscriptModel"]),
         .library(name: "LiveTranscription", targets: ["LiveTranscription"]),
         .library(name: "TranscriberWorker", targets: ["TranscriberWorker"]),
-        .executable(name: "transcribe-cli", targets: ["transcribe-cli"])
+        .executable(name: "transcribe-cli", targets: ["transcribe-cli"]),
+        .executable(name: "live-bench", targets: ["live-bench"])
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0"),
@@ -64,6 +65,18 @@ let package = Package(
             path: "Sources/transcribe-cli",
             swiftSettings: warningsAsErrors
         ),
+        .executableTarget(
+            name: "live-bench",
+            dependencies: [
+                "LiveTranscription",
+                "LiveTranscriptModel",
+                "Transcription",
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/live-bench",
+            swiftSettings: warningsAsErrors
+        ),
         .testTarget(
             name: "TranscriptionTests",
             dependencies: [
@@ -102,6 +115,16 @@ let package = Package(
                 "Transcription"
             ],
             path: "Tests/TranscriberWorkerTests",
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "LiveBenchTests",
+            dependencies: [
+                "live-bench",
+                "LiveTranscription",
+                "LiveTranscriptModel"
+            ],
+            path: "Tests/LiveBenchTests",
             swiftSettings: warningsAsErrors
         )
     ],

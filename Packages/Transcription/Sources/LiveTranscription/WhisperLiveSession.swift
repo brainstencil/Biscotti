@@ -7,7 +7,7 @@ import Transcription
 /// turns the decodes into append-only rows with `LocalAgreementReducer`.
 ///
 /// One decode runs at a time across all tracks. The XPC worker hosts this
-/// session for the app.
+/// session for the app; the replay harness runs it in process.
 ///
 /// Call `finish(timeout:)` or `cancel()` to end the session: the scheduler
 /// task keeps it alive until then.
@@ -87,6 +87,7 @@ public actor WhisperLiveSession: LiveTranscriptionSession {
 
     public func start(_ config: LiveSessionConfig) async throws {
         guard phase == .idle else { throw LiveSessionError.alreadyStarted }
+        guard config.engine == .whisper else { throw LiveSessionError.unsupportedEngine(config.engine) }
         guard LiveSessionRules.isSupported(config.tracks) else { throw LiveSessionError.unsupportedTracks(config.tracks) }
         guard LiveSessionRules.isValidInterval(config.updateInterval) else { throw LiveSessionError.invalidUpdateInterval }
         setup = try Setup(
@@ -201,6 +202,19 @@ public actor WhisperLiveSession: LiveTranscriptionSession {
         if await decodeWindow(of: track, isFinal: isFinal), isFinal {
             finishWindow(of: track)
         }
+    }
+
+    /// The revision of the latest update sent. A replay on a virtual clock
+    /// waits until its reader has seen this revision before time moves on,
+    /// so each update is stamped with the time it was made.
+    package var latestRevision: Int {
+        revision
+    }
+
+    /// True once the session has ended. Before `finish` or `cancel`, that
+    /// means it failed: the replay records it instead of guessing from the stream.
+    package var hasEnded: Bool {
+        phase == .ended
     }
 
     /// Clients waiting for the lane. Tests use it to know a pass is queued.

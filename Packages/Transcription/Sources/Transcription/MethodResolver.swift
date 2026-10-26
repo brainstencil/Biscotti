@@ -27,6 +27,15 @@ public extension TranscriptionMethod {
     }
 }
 
+/// What the replay harness needs to match the app's final pass, without
+/// copying the method's settings.
+package extension TranscriptionMethod {
+    /// The final pass's Whisper options, before any custom-vocabulary prompt.
+    var whisperDecodingOptions: DecodingOptions {
+        MethodResolver.resolve(self).decodingOptions
+    }
+}
+
 /// Diarization merge strategy — internal to the engine, not public API.
 enum DiarizationStrategyInternal: String, Equatable {
     case subsegment

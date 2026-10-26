@@ -75,8 +75,8 @@ public struct LocalAgreementReducer: Sendable {
     static let forcedBoundaryHoldBack: TimeInterval = 5
     /// Committed words this far before the window start can no longer overlap a decode.
     static let committedRetention: TimeInterval = 1
-    /// The most settled text a decode is prompted with.
-    private static let promptCharacterLimit = 100
+    /// The most settled text a decode is prompted with; the replay harness's cost check uses it too.
+    package static let promptCharacterLimit = 100
 
     public let track: LiveTrack
     /// The end of the latest decoded window or resolved silence.

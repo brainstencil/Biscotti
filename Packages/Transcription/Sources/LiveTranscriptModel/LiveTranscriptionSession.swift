@@ -2,8 +2,9 @@ import Foundation
 
 /// The one engine interface for live transcription.
 ///
-/// The in-process Whisper session implements it, and so does the app's XPC
-/// proxy, so the app and the tests drive every engine the same way.
+/// The in-process Whisper and SpeechAnalyzer sessions implement it, and so
+/// does the app's XPC proxy, so the app, the replay harness and the tests
+/// drive every engine the same way.
 public protocol LiveTranscriptionSession: Sendable {
     /// Updates for every track, in the order they were produced. The stream
     /// ends when the session finishes, is cancelled or fails; an end without

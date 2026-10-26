@@ -66,6 +66,28 @@ actions:
     command: "bash -c 'set -o pipefail; make bench 2>&1 | tail -n 400'"
     timeout: 900
 
+  # The live transcript replay harness. ARGS is the live-bench subcommand and
+  # its options; the three folders come from the server's environment. A
+  # 45-minute soak with its baseline takes about 48 minutes, and a cold
+  # release build adds several more, so the limit is two hours.
+  - name: "bench_live"
+    description: "Non-gating: live transcript replay harness (live-bench). ARGS e.g. \"run --option whisper-current --interval 2 --mode two-track --clips smoke --vocabulary-off\" or \"cost --model NAME\"; \"speech-assets --install\" once before the first speechanalyzer run. Needs BENCH_LIVE_MODELS, BENCH_LIVE_FIXTURES and BENCH_LIVE_OUT in the server environment."
+    command: "bash -c 'set -o pipefail; make bench-live 2>&1 | tail -n 400'"
+    parameters:
+      - name: "ARGS"
+        type: "insecure_string"
+        description: "live-bench subcommand and options, without --models, --fixtures or --out"
+      - name: "BENCH_LIVE_MODELS"
+        type: "optional_env_var"
+        description: "Model cache folder (holds argmaxinc/whisperkit-coreml/<model>)"
+      - name: "BENCH_LIVE_FIXTURES"
+        type: "optional_env_var"
+        description: "Fixtures folder from Tools/live_bench/make_fixtures.py"
+      - name: "BENCH_LIVE_OUT"
+        type: "optional_env_var"
+        description: "Folder that receives the results"
+    timeout: 7200
+
   - name: "build_llm"
     description: "Build the LocalLLM SPM package (Packages/LocalLLM)"
     command: "bash -c 'set -o pipefail; swift build --package-path Packages/LocalLLM 2>&1 | tail -n 400'"

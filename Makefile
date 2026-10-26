@@ -26,7 +26,7 @@ SWIFTFORMAT_SHA256  := b990400779aceb7d7020796eb9ba814d4480543f671d38fc0ff48cb72
 SWIFTFORMAT_DIR := $(TOOLS_DIR)/swiftformat-$(SWIFTFORMAT_VERSION)
 SWIFTFORMAT := $(SWIFTFORMAT_DIR)/swiftformat
 
-.PHONY: help bootstrap generate build test test-ai bench lint format build-app test-app precommit-checks hooks ci clean manual-tests-check
+.PHONY: help bootstrap generate build test test-ai bench bench-live lint format build-app test-app precommit-checks hooks ci clean manual-tests-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -99,6 +99,18 @@ test-ai: ## NON-GATING: heavy AI/model tests (downloads GBs; not in CI)
 
 bench: ## NON-GATING: FTS5 search benchmarks (SLOW ~12 min; prints report)
 	BISCOTTI_RUN_BENCH=1 swift test --no-parallel --package-path Packages/BiscottiKit --filter "SearchBenchmark"
+
+# The live transcript replay harness (Packages/Transcription live-bench). The
+# three folders come from the environment so results never land in production
+# paths by accident; live-bench refuses ~/Library/Application Support/Biscotti
+# and /Applications/Biscotti.app itself. Built in release so the session code
+# runs at shipping speed. Score results with Tools/live_bench (score.py, report.py).
+bench-live: ## NON-GATING: live transcript replay harness; ARGS="run --option whisper-current --interval 2 --mode two-track --clips smoke"
+	@test -n "$(BENCH_LIVE_MODELS)" || { echo "bench-live: set BENCH_LIVE_MODELS to the model cache folder"; exit 2; }
+	@test -n "$(BENCH_LIVE_FIXTURES)" || { echo "bench-live: set BENCH_LIVE_FIXTURES to the fixtures folder"; exit 2; }
+	@test -n "$(BENCH_LIVE_OUT)" || { echo "bench-live: set BENCH_LIVE_OUT to the results folder"; exit 2; }
+	swift run -c release --package-path Packages/Transcription live-bench $(ARGS) \
+	  --models "$(BENCH_LIVE_MODELS)" --fixtures "$(BENCH_LIVE_FIXTURES)" --out "$(BENCH_LIVE_OUT)"
 
 lint: $(SWIFTLINT) $(SWIFTFORMAT) ## Check formatting + lint (non-mutating)
 	$(SWIFTFORMAT) $(LINT_PATHS) --lint --quiet --cache ignore

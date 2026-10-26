@@ -10,11 +10,13 @@ public enum LiveTrack: String, Codable, Sendable, Hashable {
     case mixed
 }
 
-/// The engine that produces live text. The app runs only Whisper; the kind
-/// stays in `LiveSessionConfig` as wire format, and the replay harness's
-/// reference branch adds a second engine (SpeechAnalyzer).
+/// The engine that produces live text. The app runs only Whisper; the
+/// replay harness also runs SpeechAnalyzer.
 public enum LiveEngineKind: String, Codable, Sendable, Hashable {
     case whisper
+    /// Apple's SpeechAnalyzer (macOS 26), compared by the replay harness.
+    /// The app does not run it.
+    case speechAnalyzer
 }
 
 /// The language policy of a live session.
@@ -23,7 +25,8 @@ public enum LiveLanguage: Codable, Sendable, Hashable {
     /// Identify the language from the first speech, then keep it.
     case detect
     /// A locale identifier: the language Detect found, kept when the
-    /// session restarts.
+    /// session restarts, or the language of an engine that cannot detect
+    /// it (SpeechAnalyzer).
     case locale(String)
 }
 

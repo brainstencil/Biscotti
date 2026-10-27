@@ -34,6 +34,16 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
     private var configObserver: NSObjectProtocol?
     private var outputRateOverride: (deviceID: AudioObjectID, originalRate: Double)?
 
+    /// Counts capture graphs started on engineQueue: the initial start, a
+    /// startup restart and every rebuild. A reconnect reads it to see whether
+    /// the configuration-change path has already rebuilt the graph.
+    private let graphGeneration = Atomic<Int>(0)
+
+    /// How long a reconnect waits for voice processing to finish following a
+    /// device change before it rebuilds the graph itself. On hardware, voice
+    /// processing took 0.7–2.2 s to reconfigure after an AirPods change.
+    static let voiceProcessingSettleTimeout: Duration = .seconds(3)
+
     /// First mic write error from the most recent session. Cleared at
     /// the start of each recording; set during `closeSession()` after the
     /// writer thread drains. Thread-safe via `Mutex`.
@@ -123,18 +133,37 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
     }
 
     /// Rebuilds hardware while retaining the session file and its first anchor.
+    ///
+    /// Voice processing follows a default-device change by itself. When it has
+    /// finished, AVAudioEngine stops and posts a configuration change, and
+    /// `handleConfigurationChange` rebuilds the graph. Disabling voice
+    /// processing while it is still reconfiguring can crash (#124) or deadlock
+    /// inside AudioDSP. So a reconnect first waits for that rebuild, and
+    /// rebuilds here only if none comes within `voiceProcessingSettleTimeout`.
     func reconnect() async throws {
         guard capturingFlag.load(ordering: .acquiring) else { return }
+        let generation = graphGeneration.load(ordering: .acquiring)
+        let waitStart = Date()
+        await Self.waitForGraphRebuild(
+            after: generation,
+            timeout: Self.voiceProcessingSettleTimeout,
+            currentGeneration: { self.graphGeneration.load(ordering: .acquiring) },
+            isCapturing: { self.capturingFlag.load(ordering: .acquiring) }
+        )
+        let waited = Date().timeIntervalSince(waitStart)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             engineQueue.async { [self] in
                 guard !isTearingDown else {
                     cont.resume()
                     return
                 }
-                if let inID = CoreAudioHelpers.defaultInputDeviceID() {
-                    let name = CoreAudioHelpers.deviceName(for: inID) ?? "unknown"
-                    logger.info("Mic reconnect: following default input \"\(name)\" id=\(inID)")
+                guard graphGeneration.load(ordering: .acquiring) == generation else {
+                    logger.notice("Mic reconnect: configuration change already rebuilt the graph (waited \(waited, privacy: .public)s)")
+                    cont.resume()
+                    return
                 }
+                let inID = CoreAudioHelpers.defaultInputDeviceID() ?? 0
+                logger.notice("Mic reconnect: no configuration change after \(waited, privacy: .public)s; rebuilding for default input id=\(inID, privacy: .public)")
                 teardownEngine()
                 do {
                     try buildAndStartEngineOrThrow()
@@ -211,6 +240,28 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
 
         engine.prepare()
         try engine.start()
+        graphGeneration.wrappingAdd(1, ordering: .releasing)
+    }
+
+    /// Polls until `currentGeneration()` differs from `generation`, `timeout`
+    /// passes, or capture stops. Returns true if a new graph started.
+    @discardableResult
+    static func waitForGraphRebuild(
+        after generation: Int,
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50),
+        currentGeneration: () -> Int,
+        isCapturing: () -> Bool
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while currentGeneration() == generation, isCapturing(), ContinuousClock.now < deadline {
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                break // the recorder is stopping
+            }
+        }
+        return currentGeneration() != generation
     }
 
     /// Restarts a settling graph in place, or rebuilds after established audio delivery.

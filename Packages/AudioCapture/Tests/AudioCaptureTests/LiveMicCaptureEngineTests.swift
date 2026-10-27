@@ -1,5 +1,7 @@
 import AudioToolbox
 import AVFoundation
+import Foundation
+import Synchronization
 import Testing
 @testable import AudioCapture
 
@@ -162,5 +164,59 @@ struct VPIOBufferHelperTests {
             interleaved: false,
             channelLayout: layout
         )
+    }
+}
+
+@Suite("Mic reconnect waits for voice processing")
+struct VoiceProcessingSettleWaitTests {
+    /// Stands in for the engine's graph generation and capturing flag.
+    private final class EngineState: Sendable {
+        let generation = Atomic<Int>(0)
+        let capturing = Atomic<Bool>(true)
+    }
+
+    @Test("Returns as soon as the configuration-change path starts a new graph")
+    func returnsWhenGraphRebuilt() async {
+        let state = EngineState()
+        let rebuild = Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            state.generation.wrappingAdd(1, ordering: .releasing)
+        }
+        let start = ContinuousClock.now
+        let rebuilt = await LiveMicCaptureEngine.waitForGraphRebuild(
+            after: 0, timeout: .seconds(5),
+            currentGeneration: { state.generation.load(ordering: .acquiring) },
+            isCapturing: { state.capturing.load(ordering: .acquiring) }
+        )
+        await rebuild.value
+        #expect(rebuilt)
+        #expect(ContinuousClock.now - start < .seconds(2), "The wait did not end when the graph was rebuilt")
+    }
+
+    @Test("Returns false after the timeout when no new graph starts")
+    func timesOutWithoutRebuild() async {
+        let state = EngineState()
+        let start = ContinuousClock.now
+        let rebuilt = await LiveMicCaptureEngine.waitForGraphRebuild(
+            after: 0, timeout: .milliseconds(200),
+            currentGeneration: { state.generation.load(ordering: .acquiring) },
+            isCapturing: { state.capturing.load(ordering: .acquiring) }
+        )
+        #expect(!rebuilt)
+        #expect(ContinuousClock.now - start >= .milliseconds(200))
+    }
+
+    @Test("Stops waiting when capture stops")
+    func stopsWhenCaptureStops() async {
+        let state = EngineState()
+        state.capturing.store(false, ordering: .releasing)
+        let start = ContinuousClock.now
+        let rebuilt = await LiveMicCaptureEngine.waitForGraphRebuild(
+            after: 0, timeout: .seconds(5),
+            currentGeneration: { state.generation.load(ordering: .acquiring) },
+            isCapturing: { state.capturing.load(ordering: .acquiring) }
+        )
+        #expect(!rebuilt)
+        #expect(ContinuousClock.now - start < .seconds(1))
     }
 }

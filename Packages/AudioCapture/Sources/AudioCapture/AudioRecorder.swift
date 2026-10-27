@@ -569,10 +569,9 @@ extension AudioRecorder {
     /// with retry on transient failures. The reconnect includes a settle delay
     /// (inside the engine) to let the HAL stabilize.
     /// On INPUT change: reconnect the mic engine so it picks up the new default
-    /// input device. AVAudioEngine does NOT automatically follow default-input
-    /// changes — it keeps using the device it was started with. Without an
-    /// explicit reconnect, switching to AirPods leaves the built-in mic active,
-    /// and removing the current device (AirPods out) loses audio entirely.
+    /// input device and its format. Voice processing follows the new device by
+    /// itself first, and the mic engine waits for that (up to a few seconds)
+    /// before it rebuilds; see `LiveMicCaptureEngine.reconnect()`.
     /// `isRecording` stays `true` throughout -- no audio loss.
     private func handleDeviceChange(_ event: DeviceChangeEvent) async {
         guard isRecording else { return }

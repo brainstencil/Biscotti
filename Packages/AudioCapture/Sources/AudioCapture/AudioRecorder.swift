@@ -571,7 +571,7 @@ extension AudioRecorder {
     /// On INPUT change: reconnect the mic engine so it picks up the new default
     /// input device and its format. Voice processing follows the new device by
     /// itself first, and the mic engine waits for that (up to a few seconds)
-    /// before it rebuilds; see `LiveMicCaptureEngine.reconnect()`.
+    /// and restarts the existing graph; see `LiveMicCaptureEngine.reconnect()`.
     /// `isRecording` stays `true` throughout -- no audio loss.
     private func handleDeviceChange(_ event: DeviceChangeEvent) async {
         guard isRecording else { return }

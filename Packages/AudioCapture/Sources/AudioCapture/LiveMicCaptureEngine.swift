@@ -39,6 +39,15 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
     /// configuration-change path has already restarted the graph.
     private let graphGeneration = Atomic<Int>(0)
 
+    /// Default devices the current engine was built for. Nil when there is no
+    /// engine or the devices could not be read. Owned by engineQueue.
+    private var engineRoute: MicRoute?
+
+    /// How long a reconnect request waits for a freshly started engine's first
+    /// buffer before it treats the request as a route change. On hardware, the
+    /// first buffer arrived 0.13–0.37 s after a voice-processing start.
+    static let reconnectFirstBufferTimeout: Duration = .seconds(1)
+
     /// How long a reconnect waits for voice processing to finish following a
     /// device change before it rebuilds the graph itself. On hardware, voice
     /// processing took 0.7–2.2 s to reconfigure after an AirPods change.
@@ -137,18 +146,26 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
         }
     }
 
-    /// Rebuilds hardware while retaining the session file and its first anchor.
+    /// Follows a default-device change while retaining the session file and its
+    /// first anchor.
+    ///
+    /// Requests can be stale: `AudioRecorder` handles each input change after
+    /// the previous reconnect, so a route flap can be over by then. If the
+    /// engine runs on the current default devices and delivers audio, it is
+    /// kept (see `MicReconnectPolicy`).
     ///
     /// Voice processing follows a default-device change by itself. When it has
     /// finished, AVAudioEngine stops and posts a configuration change, and
     /// `handleConfigurationChange` restarts the graph. Disabling voice
     /// processing while it is still reconfiguring can crash (#124) or deadlock
-    /// inside AudioDSP. So a reconnect first waits for that restart, and
-    /// rebuilds here only if none comes within `voiceProcessingSettleTimeout`.
+    /// inside AudioDSP. So a reconnect for a real change waits for that
+    /// restart, and rebuilds here only if none comes within
+    /// `voiceProcessingSettleTimeout`.
     func reconnect() async throws {
         guard capturingFlag.load(ordering: .acquiring) else { return }
         let generation = graphGeneration.load(ordering: .acquiring)
         let waitStart = Date()
+        if await keepsEngineForStaleRequest(since: waitStart) { return }
         await Self.waitForGraphRebuild(
             after: generation,
             timeout: Self.voiceProcessingSettleTimeout,
@@ -158,33 +175,62 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
         let waited = Date().timeIntervalSince(waitStart)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             engineQueue.async { [self] in
-                guard !isTearingDown else {
-                    cont.resume()
-                    return
-                }
-                guard graphGeneration.load(ordering: .acquiring) == generation else {
-                    logger.notice("Mic reconnect: configuration change already restarted the graph (waited \(waited, privacy: .public)s)")
-                    cont.resume()
-                    return
-                }
-                let inID = CoreAudioHelpers.defaultInputDeviceID() ?? 0
-                logger.notice("Mic reconnect: no configuration change after \(waited, privacy: .public)s; rebuilding for default input id=\(inID, privacy: .public)")
-                teardownEngine()
                 do {
-                    try buildAndStartEngineOrThrow()
+                    try rebuildUnlessRestarted(since: generation, waited: waited)
                     cont.resume()
                 } catch {
-                    logger.error("Mic reconnect failed: \(error.localizedDescription)")
-                    removeConfigChangeObserver()
-                    teardownEngine()
-                    restoreOutputRate()
-                    closeSession()
-                    capturingFlag.store(false, ordering: .releasing)
-                    cont.resume(throwing: CaptureError.micEngineFailed(
-                        error.localizedDescription
-                    ))
+                    cont.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    /// Returns true, and logs it, when the engine already runs on the current
+    /// default devices and delivers audio. A fresh engine gets up to
+    /// `reconnectFirstBufferTimeout` for its first buffer.
+    private func keepsEngineForStaleRequest(since waitStart: Date) async -> Bool {
+        var detail = ""
+        let decision = await Self.settleReconnectDecision(
+            timeout: Self.reconnectFirstBufferTimeout,
+            decision: {
+                let state = await self.reconnectState()
+                detail = state.detail
+                return state.decision
+            },
+            isCapturing: { self.capturingFlag.load(ordering: .acquiring) }
+        )
+        guard decision == .keepEngine else { return false }
+        let waited = Date().timeIntervalSince(waitStart)
+        logger.notice("Mic reconnect: keeping current engine; \(detail, privacy: .public), waited=\(waited, privacy: .public)s")
+        return true
+    }
+
+    /// Rebuilds the graph for a reconnect unless the configuration-change
+    /// path has restarted it since `generation`, or the engine is current by
+    /// now. Runs on engineQueue.
+    private func rebuildUnlessRestarted(since generation: Int, waited: TimeInterval) throws {
+        guard !isTearingDown else { return }
+        guard graphGeneration.load(ordering: .acquiring) == generation else {
+            logger.notice("Mic reconnect: configuration change already restarted the graph (waited \(waited, privacy: .public)s)")
+            return
+        }
+        let state = reconnectStateOnQueue()
+        guard state.decision != .keepEngine else {
+            logger.notice("Mic reconnect: keeping current engine; \(state.detail, privacy: .public), waited=\(waited, privacy: .public)s")
+            return
+        }
+        logger.notice("Mic reconnect: no configuration change after \(waited, privacy: .public)s; rebuilding; \(state.detail, privacy: .public)")
+        teardownEngine()
+        do {
+            try buildAndStartEngineOrThrow()
+        } catch {
+            logger.error("Mic reconnect failed: \(error.localizedDescription)")
+            removeConfigChangeObserver()
+            teardownEngine()
+            restoreOutputRate()
+            closeSession()
+            capturingFlag.store(false, ordering: .releasing)
+            throw CaptureError.micEngineFailed(error.localizedDescription)
         }
     }
 
@@ -217,9 +263,9 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
         try installCaptureGraphAndStart(newEngine)
     }
 
-    /// Re-query the hardware format for both initial setup and startup recovery.
-    /// The existing voice-processing unit stays enabled when recovering a stopped
-    /// engine, so recovery does not recreate the aggregate device that just settled.
+    /// Re-query the hardware format for initial setup, rebuilds and restarts.
+    /// The existing voice-processing unit stays enabled when restarting a stopped
+    /// engine, so a restart does not recreate the aggregate device that just settled.
     private func installCaptureGraphAndStart(_ engine: AVAudioEngine) throws {
         let input = engine.inputNode
         let tapFormat = input.outputFormat(forBus: 0)
@@ -245,7 +291,53 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
 
         engine.prepare()
         try engine.start()
+        engineRoute = inputID != 0 && outputID != 0
+            ? MicRoute(inputID: inputID, outputID: outputID) : nil
         graphGeneration.wrappingAdd(1, ordering: .releasing)
+    }
+
+    /// The reconnect decision for the current engine, with the facts behind it
+    /// for the log. Runs on engineQueue.
+    private func reconnectStateOnQueue() -> (decision: MicReconnectDecision, detail: String) {
+        let builtRoute = engineRoute
+        let currentRoute = MicRoute.currentDefault()
+        let running = engine?.isRunning ?? false
+        let delivered = session?.hasDeliveredBuffer ?? false
+        let decision = MicReconnectPolicy.decide(
+            builtRoute: builtRoute, currentRoute: currentRoute,
+            isRunning: running, hasDeliveredAudio: delivered
+        )
+        let built = builtRoute.map(String.init(describing:)) ?? "none"
+        let current = currentRoute.map(String.init(describing:)) ?? "unknown"
+        return (decision, "built for \(built), current \(current), running=\(running), bufferDelivered=\(delivered)")
+    }
+
+    /// Reads `reconnectStateOnQueue()` from outside engineQueue.
+    private func reconnectState() async -> (decision: MicReconnectDecision, detail: String) {
+        await withCheckedContinuation { cont in
+            engineQueue.async { [self] in cont.resume(returning: reconnectStateOnQueue()) }
+        }
+    }
+
+    /// Polls `decision()` while it is `.awaitFirstBuffer`, until `timeout`
+    /// passes or capture stops. Returns the last decision.
+    static func settleReconnectDecision(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(25),
+        decision: () async -> MicReconnectDecision,
+        isCapturing: () -> Bool
+    ) async -> MicReconnectDecision {
+        let deadline = ContinuousClock.now + timeout
+        var current = await decision()
+        while current == .awaitFirstBuffer, isCapturing(), ContinuousClock.now < deadline {
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                break // the recorder is stopping
+            }
+            current = await decision()
+        }
+        return current
     }
 
     /// Polls until `currentGeneration()` differs from `generation`, `timeout`
@@ -308,6 +400,7 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
     /// then reinstalls the tap and silent output and starts the engine again.
     private func restartExistingEngine(_ current: AVAudioEngine) throws {
         session?.invalidateTap()
+        engineRoute = nil
         current.inputNode.removeTap(onBus: 0)
         if current.isRunning { current.stop() }
         if let node = silenceNode { current.detach(node) }
@@ -419,6 +512,7 @@ final class LiveMicCaptureEngine: CaptureEngine, @unchecked Sendable { // swiftl
     ///   4. Detach the silence node and nil out references.
     private func teardownEngine() {
         session?.invalidateTap()
+        engineRoute = nil
         guard let eng = engine else {
             silenceNode = nil
             return

@@ -91,9 +91,9 @@ struct AppCoreIntelligenceTests {
         // Now let the fire-and-forget task run
         await fix.core.awaitPendingTranscription()
 
-        // Positive evidence: the LLM runner opened a session, proving
+        // Positive evidence: the broker loaded the model, proving
         // runAutoEnhancements was called AND reached the LLM path.
-        #expect(fix.fakeLLMRunner.sessionCount == 1)
+        #expect(fix.llmOpener.openCount == 1)
 
         // Verify the intelligence service is accessible via core
         #expect(fix.core.intelligence === fix.intelligence)
@@ -113,8 +113,8 @@ struct AppCoreIntelligenceTests {
 
         await fix.core.awaitPendingTranscription()
 
-        // No LLM session should have been opened
-        #expect(fix.fakeLLMRunner.sessionCount == 0)
+        // The model should not have been loaded
+        #expect(fix.llmOpener.openCount == 0)
     }
 
     // MARK: - intelligence property
@@ -149,8 +149,8 @@ struct AppCoreIntelligenceTests {
         // Run enhancements through the AppCore-wired intelligence
         await fix.intelligence.runAutoEnhancements(meetingID: meetingID)
 
-        // Positive evidence: an LLM session was opened
-        #expect(fix.fakeLLMRunner.sessionCount == 1)
+        // Positive evidence: the model was loaded
+        #expect(fix.llmOpener.openCount == 1)
         #expect(fix.intelligence.jobs[meetingID] == .completed)
     }
 
@@ -170,8 +170,8 @@ struct AppCoreIntelligenceTests {
 
         await fix.intelligence.runAutoEnhancements(meetingID: meetingID)
 
-        // Intelligence exits early -- no session opened
-        #expect(fix.fakeLLMRunner.sessionCount == 0)
+        // Intelligence exits early -- the model is never loaded
+        #expect(fix.llmOpener.openCount == 0)
         #expect(fix.intelligence.jobs[meetingID] == nil)
     }
 }

@@ -1,3 +1,4 @@
+import BiscottiTestSupport
 import DataStore
 import Foundation
 import LocalLLM
@@ -111,27 +112,6 @@ final class FakeSession: LLMSession, @unchecked Sendable {
             iterator.next()
         }
     }
-}
-
-/// Constructs a `GenerationResult` via JSON decoding. The struct has no
-/// public init (memberwise is internal to LocalLLM), but it is `Codable`.
-private func makeGenerationResult(text: String) -> GenerationResult {
-    let json: [String: Any] = [
-        "text": text,
-        "promptTokenCount": 0,
-        "generatedTokenCount": 1,
-        "cachedPromptTokenCount": 0,
-        "finishReason": ["endOfTurn": [String: Any]()],
-        "promptEvalDuration": 0.0,
-        "generationDuration": 0.0,
-        "totalDuration": 0.0,
-        "renderedPrompt": "",
-        "rawText": text
-    ]
-    // swiftlint:disable:next force_try
-    let data = try! JSONSerialization.data(withJSONObject: json)
-    // swiftlint:disable:next force_try
-    return try! JSONDecoder().decode(GenerationResult.self, from: data)
 }
 
 /// Fake model provider with configurable per-model download state.

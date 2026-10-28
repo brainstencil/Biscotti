@@ -70,9 +70,8 @@ public extension AppCore {
         permissions.setNotificationAuthorizer(notifAuth)
 
         logger.info("AppCore.live: ModelManager + Intelligence init")
-        let (modelManager, intelligence) = buildModelAndIntelligence(
-            store: store
-        )
+        let llmBroker = LLMBroker(opener: LiveLLMConnectionOpener())
+        let (modelManager, intelligence) = buildModelAndIntelligence(store: store, llmBroker: llmBroker)
 
         logger.info("AppCore.live: constructing AppCore")
         let core = AppCore(
@@ -85,6 +84,7 @@ public extension AppCore {
             notifications: notifications,
             intelligence: intelligence,
             modelManager: modelManager,
+            llmBroker: llmBroker,
             liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName)
         )
         logger.info("AppCore.live: done")
@@ -92,11 +92,12 @@ public extension AppCore {
     }
 
     /// Builds the live `ModelManager` + `Intelligence` with real LocalLLM-backed
-    /// implementations. Extracted to keep `live(storageRoot:…)` under
-    /// the function body length lint limit.
+    /// implementations. `Intelligence` reaches the model through `llmBroker`,
+    /// the connection chat shares. Extracted to keep `live(storageRoot:…)`
+    /// under the function body length lint limit.
     @MainActor
     private static func buildModelAndIntelligence(
-        store: DataStore
+        store: DataStore, llmBroker: LLMBroker
     ) -> (ModelManager, Intelligence) {
         let modelProvider = LiveModelProvider()
         let hardwareProbe = LiveHardwareProbe()
@@ -105,10 +106,9 @@ public extension AppCore {
             models: modelProvider,
             hardware: hardwareProbe
         )
-        let llmRunner = LiveLLMRunner()
         let intelligence = Intelligence(
             store: store,
-            llm: llmRunner,
+            llm: BrokeredLLMRunner(broker: llmBroker),
             modelManager: modelManager,
             settings: { [store] in
                 let saved = try? await store.settings()

@@ -304,6 +304,10 @@ public final class AppCore {
     /// Model state owner (selection, downloads, suitability).
     public let modelManager: ModelManager
 
+    /// The one connection to the local model, lent to `intelligence` and to
+    /// chat so the model is never loaded twice.
+    public let llmBroker: LLMBroker
+
     /// Checks for newer releases on GitHub.
     public let updateChecker: UpdateChecker
 
@@ -397,6 +401,7 @@ public final class AppCore {
         notifications: NotificationService,
         intelligence: Intelligence,
         modelManager: ModelManager,
+        llmBroker: LLMBroker,
         scheduler: any AppScheduler = LiveAppScheduler(),
         updateChecker: UpdateChecker? = nil,
         mcpServer: MCPServerController? = nil,
@@ -412,6 +417,7 @@ public final class AppCore {
         self.notifications = notifications
         self.intelligence = intelligence
         self.modelManager = modelManager
+        self.llmBroker = llmBroker
         self.scheduler = scheduler
         self.updateChecker = updateChecker ?? UpdateChecker()
         self.mcpServer = mcpServer ?? MCPServerController(store: store)

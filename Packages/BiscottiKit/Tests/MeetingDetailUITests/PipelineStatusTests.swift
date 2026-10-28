@@ -584,14 +584,14 @@ struct PipelineReTranscribeTests {
         )
         await viewModel.load()
 
-        // Before re-transcribe: no LLM sessions
-        #expect(fix.fakeLLMRunner.sessionCount == 0)
+        // Before re-transcribe: the model was never loaded
+        #expect(fix.llmOpener.openCount == 0)
 
         // Trigger re-transcribe which should also call runAutoEnhancements
         await viewModel.reTranscribe()
 
-        // The LLM runner should have been called (proving auto-enhancements ran)
-        #expect(fix.fakeLLMRunner.sessionCount == 1)
+        // The model should have been loaded (proving auto-enhancements ran)
+        #expect(fix.llmOpener.openCount == 1)
     }
 }
 

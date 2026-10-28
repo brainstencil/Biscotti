@@ -379,8 +379,9 @@ private func buildFailableVocabCore(
         models: fakeModelProvider,
         hardware: fakeHardwareProbe
     )
+    let llmBroker = LLMBroker(opener: ScriptedLLMOpener())
     let intelligence = Intelligence(
-        store: store, llm: FakeCoreLLMRunner(),
+        store: store, llm: BrokeredLLMRunner(broker: llmBroker),
         modelManager: modelManager,
         settings: { AISettings(enabled: true) }
     )
@@ -402,7 +403,8 @@ private func buildFailableVocabCore(
             provider: FakeTestNotificationCenter()
         ),
         intelligence: intelligence,
-        modelManager: modelManager
+        modelManager: modelManager,
+        llmBroker: llmBroker
     )
 }
 

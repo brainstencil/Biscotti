@@ -671,6 +671,7 @@ let package = Package(
             name: "IntelligenceTests",
             dependencies: [
                 "Intelligence",
+                "BiscottiTestSupport",
                 "DataStore",
                 "VoiceprintMatching",
                 .product(name: "LocalLLM", package: "LocalLLM"),

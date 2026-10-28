@@ -248,8 +248,9 @@ private func buildAppCore(
         models: fakeModelProvider,
         hardware: fakeHardwareProbe
     )
+    let llmBroker = LLMBroker(opener: ScriptedLLMOpener())
     let intelligence = Intelligence(
-        store: store, llm: FakeCoreLLMRunner(),
+        store: store, llm: BrokeredLLMRunner(broker: llmBroker),
         modelManager: modelManager,
         settings: { AISettings(enabled: true) }
     )
@@ -261,7 +262,8 @@ private func buildAppCore(
         detector: MeetingDetector(catalog: catalog, source: FakeActivitySource()),
         notifications: NotificationService(provider: FakeTestNotificationCenter()),
         intelligence: intelligence,
-        modelManager: modelManager
+        modelManager: modelManager,
+        llmBroker: llmBroker
     )
 }
 

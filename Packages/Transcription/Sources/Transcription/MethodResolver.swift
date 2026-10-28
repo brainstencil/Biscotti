@@ -1,4 +1,5 @@
 import Foundation
+import WhisperKit
 
 /// Internal settings resolved from a ``TranscriptionMethod``.
 ///
@@ -10,8 +11,24 @@ struct ResolvedMethodSettings: Equatable {
     let sttModelRepo: String
     let enableWordTimestamps: Bool
     let detectLanguage: Bool
+    /// Whether WhisperKit retries a window at higher temperatures when its
+    /// first decoded token is unlikely (`firstTokenLogProbThreshold`, -1.5).
+    /// The retries often return one short or wrong segment, or nothing, and
+    /// WhisperKit then skips the rest of the 30 s window, speech included.
+    /// See "The first-token check drops whole 30 s windows of speech" under
+    /// Risks & Gotchas in `specs/research/argmax/README.md`.
+    let checksFirstToken: Bool
     let diarizationStrategy: DiarizationStrategyInternal
     let sequentialLoading: Bool
+
+    /// The final pass's Whisper options, before any custom-vocabulary prompt.
+    var decodingOptions: DecodingOptions {
+        var options = DecodingOptions(detectLanguage: detectLanguage, wordTimestamps: enableWordTimestamps)
+        if !checksFirstToken {
+            options.firstTokenLogProbThreshold = nil
+        }
+        return options
+    }
 }
 
 /// Diarization merge strategy — internal to the engine, not public API.
@@ -42,6 +59,8 @@ enum MethodResolver {
             resolveV1(physicalMemory: physicalMemory)
         case "v2":
             resolveV2(physicalMemory: physicalMemory)
+        case "v3":
+            resolveV3(physicalMemory: physicalMemory)
         default:
             // Unknown methods fall back to v1 behavior.
             resolveV1(physicalMemory: physicalMemory)
@@ -51,18 +70,25 @@ enum MethodResolver {
     // MARK: - V1
 
     private static func resolveV1(physicalMemory: UInt64) -> ResolvedMethodSettings {
-        baseSettings(physicalMemory: physicalMemory, detectLanguage: false)
+        baseSettings(physicalMemory: physicalMemory, detectLanguage: false, checksFirstToken: true)
     }
 
     // MARK: - V2
 
     private static func resolveV2(physicalMemory: UInt64) -> ResolvedMethodSettings {
-        baseSettings(physicalMemory: physicalMemory, detectLanguage: true)
+        baseSettings(physicalMemory: physicalMemory, detectLanguage: true, checksFirstToken: true)
+    }
+
+    // MARK: - V3
+
+    private static func resolveV3(physicalMemory: UInt64) -> ResolvedMethodSettings {
+        baseSettings(physicalMemory: physicalMemory, detectLanguage: true, checksFirstToken: false)
     }
 
     private static func baseSettings(
         physicalMemory: UInt64,
-        detectLanguage: Bool
+        detectLanguage: Bool,
+        checksFirstToken: Bool
     ) -> ResolvedMethodSettings {
         let eightGB: UInt64 = 8 * 1024 * 1024 * 1024
         let isLowRAM = physicalMemory <= eightGB
@@ -72,6 +98,7 @@ enum MethodResolver {
             sttModelRepo: defaultRepo,
             enableWordTimestamps: true,
             detectLanguage: detectLanguage,
+            checksFirstToken: checksFirstToken,
             diarizationStrategy: .subsegment,
             sequentialLoading: isLowRAM
         )

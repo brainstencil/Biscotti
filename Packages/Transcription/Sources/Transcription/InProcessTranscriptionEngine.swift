@@ -196,10 +196,7 @@ private extension InProcessTranscriptionEngine {
         do {
             try await ensureWhisperKitLoaded()
 
-            var decodingOptions = DecodingOptions(
-                detectLanguage: resolvedSettings.detectLanguage,
-                wordTimestamps: resolvedSettings.enableWordTimestamps
-            )
+            var decodingOptions = resolvedSettings.decodingOptions
 
             if let promptText = VocabularyFormatter.formatPrompt(from: customVocabulary) {
                 if let tokenizer = whisperKit?.tokenizer {

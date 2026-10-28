@@ -2,8 +2,8 @@
 ///
 /// There are no transcription options — each fixed method bakes in every
 /// output-affecting parameter (STT model, diarization model, diarization
-/// strategy, word-timestamps, language detection). The engine owns the
-/// id→settings mapping; callers receive the id in
+/// strategy, word-timestamps, language detection, decoding thresholds). The
+/// engine owns the id→settings mapping; callers receive the id in
 /// ``TranscriptResult/transcriptionMethodId``.
 ///
 /// Adding a new method later is purely additive.
@@ -16,10 +16,14 @@ public struct TranscriptionMethod: Sendable, Equatable {
     /// sequential loading on low-RAM Macs, language detection off (English).
     public static let v1 = TranscriptionMethod(id: "v1") // swiftlint:disable:this identifier_name
 
-    /// The current method: `v1` settings plus Whisper language detection, so
-    /// non-English audio is transcribed in its spoken language.
+    /// `v1` settings plus Whisper language detection, so non-English audio is
+    /// transcribed in its spoken language.
     public static let v2 = TranscriptionMethod(id: "v2") // swiftlint:disable:this identifier_name
 
+    /// The current method: `v2` settings without WhisperKit's first-token
+    /// check, which dropped whole 30 s windows of speech.
+    public static let v3 = TranscriptionMethod(id: "v3") // swiftlint:disable:this identifier_name
+
     /// The current default method the engine uses.
-    public static let current: TranscriptionMethod = .v2
+    public static let current: TranscriptionMethod = .v3
 }

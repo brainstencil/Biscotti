@@ -6,7 +6,7 @@ status: draft
 
 ## Purpose and Scope
 
-`MeetingChatService` is the chat's source of truth while the app runs. For each meeting it knows whether chat is available, which threads exist, which thread is open, whether the card is open, and the answer being written. It asks, stops, retries, opens, starts and deletes threads, persisting through `DataStore` and answering through `LLMBroker` with prompts from `ChatPromptBuilder`. During a recording it applies the resource policy, including the live hold.
+`MeetingChatService` is the chat's source of truth while the app runs. For each meeting it knows whether chat is available, which threads exist, which thread is open, whether the card is open, and the answer being written. It asks, stops, retries, opens, starts and deletes threads, persisting through `DataStore` and answering through `LLMBroker` with prompts from `ChatPromptBuilder`. During a recording it applies the resource policy.
 
 Not its job: drawing (the UI observes it), prompt text and parsing ([chat_context](chat_context.md)), model access ([llm_broker](llm_broker.md)), or storage details ([chat_store](chat_store.md)).
 
@@ -124,7 +124,6 @@ Computed per meeting, in this order (the first match wins):
 4. **Lease:** `broker.withLease(model:priority: .interactive, purpose: "chat", keepAlive: policy.keepAlive(isRecording:), onWait:)`. `onWait` maps `.queued(behind: "summary")` → `.waitingForSummary` and `.loadingModel` → `.loadingModel`.
 5. Inside the lease:
    - `prompt = try await ChatPromptBuilder.build(..., count: session.countTokens)`.
-   - In `.holdLiveTranscript` mode: `hold = live.holdDecoding(reason: "chat answer")`, released in a `defer`.
    - `try await session.reconfigure(contextSize: prompt.contextSize)` (the broker skips it when unchanged).
    - Iterate `session.generateStreaming(messages:options:)`: `.token` appends to the buffer; `.reasoningToken` is ignored; `.done` marks completion.
    - Every `answerFlushInterval`, and at the end, the buffer is copied to the answer view with fresh `ChatAnswerParser.blocks(_, evidenceTimes:)`, and the status becomes `.streaming` after the first token.
@@ -151,20 +150,22 @@ Computed per meeting, in this order (the first match wins):
 
 ```swift
 public struct ChatResourcePolicy: Sendable, Equatable {
-    public enum Mode: Sendable, Equatable { case concurrent, holdLiveTranscript, waitForStop }
+    public enum Mode: Sendable, Equatable { case concurrent, waitForStop }
     public var physicalMemory: UInt64
-    // Set by the measurement phase (see research/chat_measurement). Defaults until then:
-    public var concurrentMinimumMemory: UInt64 = 24 << 30
-    public var waitForStopMaximumMemory: UInt64 = 0          // no Mac waits by default
+    // Set by the measurement phase (see research/chat_measurement). Default until then:
+    public var waitForStopMaximumMemory: UInt64 = 0          // no Mac waits
+    public var closeAfterAnswerBelowMemory: UInt64 = 24 << 30
     public var idleKeepAlive: Duration = .seconds(180)
 
     public static func forThisMac() -> ChatResourcePolicy     // ProcessInfo.physicalMemory
     public func mode() -> Mode
-    public func keepAlive(isRecording: Bool) -> LLMKeepAlive  // recording and < concurrentMinimumMemory → .close
+    public func keepAlive(isRecording: Bool) -> LLMKeepAlive
 }
 ```
 
-`mode()`: memory ≤ `waitForStopMaximumMemory` → `.waitForStop`; memory ≥ `concurrentMinimumMemory` → `.concurrent`; otherwise `.holdLiveTranscript`. Outside a recording, mode is irrelevant and keep-alive is always `.keepOpen(idleKeepAlive)`.
+- `mode()`: memory ≤ `waitForStopMaximumMemory` → `.waitForStop`; otherwise `.concurrent`. Outside a recording the mode is irrelevant.
+- `keepAlive(isRecording:)`: during a recording, on a Mac with less than `closeAfterAnswerBelowMemory`, `.close`, so the AI model's memory is free for the rest of the meeting. Otherwise `.keepOpen(idleKeepAlive)`.
+- The live transcript is never paused for chat in this version. If the measurement shows answers stall the live text or trip its watchdog, the [live hold](live_hold.md) is built and a third mode, `.holdLiveTranscript`, takes a hold for the length of each answer during a recording.
 
 ### Logging
 
@@ -172,7 +173,7 @@ public struct ChatResourcePolicy: Sendable, Equatable {
 
 ## Dependencies
 
-- `DataStore`, `Intelligence` (`LLMBroker`, `LLMBrokerError`), `LiveTranscriptionService` (snapshot, draft, hold, `isEnabled`, `setEnabled`), `LiveTranscriptModel`, `LocalLLM`, and the `MeetingChat` context files.
+- `DataStore`, `Intelligence` (`LLMBroker`, `LLMBrokerError`), `LiveTranscriptionService` (snapshot, draft, `isEnabled`, `setEnabled`), `LiveTranscriptModel`, `LocalLLM`, and the `MeetingChat` context files.
 - Used by `AppCore`, `MeetingChatUI`, `RecordingUI` and `MeetingDetailUI`.
 
 ## Test Plan (`MeetingChatTests/MeetingChatServiceTests.swift`, through `CoreFixture` with `ScriptedLLMOpener`)
@@ -201,7 +202,7 @@ Threads:
 - `newChatClearsOpenThread`, `openThreadLoadsMessages`, `deleteOpenThreadActsLikeNewChat`, `threadsNewestFirst`, `lastOpenThreadRemembered`.
 
 Policy:
-- `policyModes`: 8 GB → hold, 16 GB → hold, 24 GB → concurrent; with `waitForStopMaximumMemory` = 8 GB, 8 GB → wait.
-- `holdTakenWhileAnswering`: in hold mode, `live.isDecodingHeld` is true during the stream and false after, including after a failure.
+- `policyDefaultsToConcurrent`: 8, 16 and 64 GB all give `.concurrent` with the defaults; with `waitForStopMaximumMemory` = 8 GB, 8 GB gives `.waitForStop` and 16 GB `.concurrent`.
+- `liveTranscriptNotPausedWhileAnswering`: during a recording, the fake live engine keeps receiving chunks while an answer streams.
 - `waitForStopParksQuestion`: in wait mode, the question waits with `.waitingForRecordingToEnd` and is answered from the draft after `recordingDidStop`.
-- `closeAfterAnswerWhileRecordingOnSmallMac`: in hold mode during a recording, the lease's keep-alive is `.close`.
+- `closeAfterAnswerWhileRecordingOnSmallMac`: during a recording, the lease's keep-alive is `.close` on 16 GB and `.keepOpen(180 s)` on 32 GB; outside a recording it is `.keepOpen(180 s)` on both.

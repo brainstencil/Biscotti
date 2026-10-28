@@ -61,12 +61,10 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 
 - Chat during a recording needs the live transcript. If the live transcript is off, the field reads "Turn on the live transcript to ask during the meeting", with a button that turns it on. The live transcript then catches up from the start of the recording, and the chat can answer from what it has so far.
 - Priority is the recording first, then the live text, then chat. The recording is never slowed or interrupted by chat.
-- How chat shares the Mac with the live transcript is decided by a measurement phase (see [Measurement](#measurement)). There are three possible behaviours:
-  1. Both run at the same time.
-  2. While an answer is written, the live text pauses, then catches up, as it already does after a slow start or when the Mac runs hot. The drawer shows "Catching up…" and no words are lost. **This is the fallback where memory is tight.**
-  3. The question waits until the recording stops. This is the last resort.
-
-  The measurement sets which behaviour each Mac uses, by memory size.
+- **By default, chat and the live transcript run at the same time** on every Mac where the live transcript is on. While the AI reads the transcript and writes, the live text may fall a few seconds behind; it then catches up from its backlog, as it already does after a slow start, and no words are lost. (Decided 27 October 2026: a planned pause was dropped from the first version, because it would save no memory and the live transcript already copes with falling behind.)
+- A measurement phase (see [Measurement](#measurement)) checks this default and can change it in two ways:
+  - **Memory:** on Macs where the AI model and the live transcript do not fit in memory together, a question asked during a recording waits until the recording stops, and the status line says "Answers when the recording stops".
+  - **Contention:** if answering makes the live text stall badly, or makes the live transcript reset its speech worker (it does so when one decode takes more than 10 seconds), a pause is added: while an answer is written, the live text pauses, then catches up, with no words lost. Its design is kept ready as a contingency ([live_hold](components/live_hold.md)).
 - If the recording stops while an answer is being written, the answer finishes.
 
 ## Saved meetings and the AI's other work
@@ -106,8 +104,9 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 An early phase measures chat beside the live transcript on this Mac (M1 Max, 64 GB) while recorded meetings replay, asking a fixed set of questions:
 
 - **Memory:** the total used by the app, the speech worker and the AI worker together, from which the 8 GB and 16 GB cases are estimated. A run on an 8 GB or 16 GB Mac would firm that up.
-- **Live text delay** while an answer is written, against the live transcript's normal delay (median 1.3 s).
+- **Live text delay** while an answer is written, against the live transcript's normal delay (median 1.3 s), and how long the live text takes to catch up afterwards.
+- **Worker resets:** whether answering ever makes the live transcript's stuck-decode watchdog (10 s) reset its speech worker.
 - **Answer speed:** time to the first word, with the model already loaded and from cold, and words per second after it.
 - **Grounding:** each time cited in an answer points to text that supports it.
 
-The results choose the behaviour per memory size described in [During a recording](#during-a-recording), and they are recorded in the project's research notes.
+The results confirm or change the default described in [During a recording](#during-a-recording), and they are recorded in the project's research notes.

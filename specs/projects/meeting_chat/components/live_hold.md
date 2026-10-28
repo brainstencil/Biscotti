@@ -4,6 +4,8 @@ status: draft
 
 # Component: Live hold
 
+> **Contingency, not built by default.** Chat runs beside the live transcript, which falls behind and catches up on its own (decided 27 October 2026). This design is built only if the [chat measurement](chat_measurement.md#decision-rule) shows answers trip the live transcript's stuck-decode watchdog, stall a single decode for 5 s or more, or leave the live text more than 30 s behind. It saves no memory: the live speech model stays loaded while held.
+
 ## Purpose and Scope
 
 A way for another feature to stop live transcription's decoding for a short time and have it catch up afterwards, with no audio lost and no gap marker. Chat takes a hold while it writes an answer on Macs where the [resource policy](meeting_chat_service.md#resource-policy) says the two should not run together.

@@ -918,6 +918,8 @@ public extension DataStore {
     /// The entity name SwiftData assigns to the `Meeting` model.
     /// Used to narrow delete handling to Meeting deletes only.
     private static let meetingEntityName = String(describing: Meeting.self)
+    private static let tagEntityName = String(describing: Tag.self)
+    private static let personEntityName = String(describing: Person.self)
 
     /// Walks a list of history transactions and returns the set of
     /// meeting UUIDs that need reindexing plus a flag indicating
@@ -982,49 +984,58 @@ public extension DataStore {
 
     /// Determines which meetings need reindexing for a changed object.
     ///
-    /// Tries to resolve the `PersistentIdentifier` as a `Meeting`
-    /// first (the common case), then as a `Tag` or `Person` (whose
-    /// property changes — e.g. rename — affect the search text of
-    /// their associated meetings). Other model types are covered by
-    /// the relationship-level update SwiftData records on Meeting.
+    /// Dispatches on the identifier's entity: a `Meeting` change reindexes
+    /// that meeting; a `Tag` or `Person` change (e.g. a rename) reindexes
+    /// their associated meetings. Other model types are covered by the
+    /// relationship-level update SwiftData records on Meeting.
+    ///
+    /// The entity check matters: a `persistentModelID` predicate matches
+    /// on the row's primary key, so a Person's identifier can fetch an
+    /// unrelated Meeting with the same key. Trying the Meeting fetch
+    /// first used to swallow Person and Tag changes that way.
     private func collectAffectedMeetings(
         pid: PersistentIdentifier,
         into set: inout Set<UUID>
     ) {
-        // Meeting insert or update.
-        if let mtg = try? context.fetch(
-            FetchDescriptor<Meeting>(
-                predicate: #Predicate { $0.persistentModelID == pid }
-            )
-        ).first {
-            set.insert(mtg.id)
-            return
-        }
+        switch pid.entityName {
+        case Self.meetingEntityName:
+            if let mtg = try? context.fetch(
+                FetchDescriptor<Meeting>(
+                    predicate: #Predicate { $0.persistentModelID == pid }
+                )
+            ).first {
+                set.insert(mtg.id)
+            }
 
-        // Tag rename — reindex every meeting that carries this tag.
-        if let tag = try? context.fetch(
-            FetchDescriptor<Tag>(
-                predicate: #Predicate { $0.persistentModelID == pid }
-            )
-        ).first {
-            for mtg in tag.meetings {
-                set.insert(mtg.id)
+        case Self.tagEntityName:
+            // Tag rename — reindex every meeting that carries this tag.
+            if let tag = try? context.fetch(
+                FetchDescriptor<Tag>(
+                    predicate: #Predicate { $0.persistentModelID == pid }
+                )
+            ).first {
+                for mtg in tag.meetings {
+                    set.insert(mtg.id)
+                }
             }
-            return
-        }
 
-        // Person rename — reindex meetings where this person appears.
-        if let person = try? context.fetch(
-            FetchDescriptor<Person>(
-                predicate: #Predicate { $0.persistentModelID == pid }
-            )
-        ).first {
-            for mtg in person.meetings {
-                set.insert(mtg.id)
+        case Self.personEntityName:
+            // Person rename — reindex meetings where this person appears.
+            if let person = try? context.fetch(
+                FetchDescriptor<Person>(
+                    predicate: #Predicate { $0.persistentModelID == pid }
+                )
+            ).first {
+                for mtg in person.meetings {
+                    set.insert(mtg.id)
+                }
+                for mtg in person.organizedMeetings {
+                    set.insert(mtg.id)
+                }
             }
-            for mtg in person.organizedMeetings {
-                set.insert(mtg.id)
-            }
+
+        default:
+            break
         }
     }
 

@@ -10,7 +10,7 @@ No phase changes `Packages/Transcription`, `AudioCapture`, `LocalLLM` or `MCPSer
 
 ## Phases
 
-- [ ] Phase 1: Chat storage: `ChatThread` and `ChatMessage` models, the `Meeting.chatThreads` cascade, read models, write methods, and the test that opens a store made before the chat models [chat_store]
+- [x] Phase 1: Chat storage: `ChatThread` and `ChatMessage` models, the `Meeting.chatThreads` cascade, read models, write methods, and the test that opens a store made before the chat models [chat_store]
 - [ ] Phase 2: `LLMBroker` in `Intelligence`: leases, priorities, keep-alive and idle close, `BrokeredLLMRunner` and `LiveLLMConnectionOpener`; `Intelligence` moves onto the broker in `AppCore`, `PreviewAppCore` and `CoreFixture` [llm_broker]
 - [ ] Phase 3: The `MeetingChat` target and `ChatContextBuilder`: evidence lines, the prompt, fitting and passage selection for long meetings, and answer parsing with citation checks [chat_context]
 - [ ] Phase 4: `MeetingChatService`: availability, asking, Stop, Retry, threads, recovery of answers interrupted by a quit, the resource policy, and the `AppCore` and `CoreFixture` wiring; a `MeetingChatAITests` suite added to `make test-ai` [meeting_chat_service, chat_context]

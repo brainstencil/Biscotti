@@ -77,6 +77,11 @@ import SwiftData
     @Relationship
     public var organizer: Person?
 
+    /// The meeting's chat threads, in no order (`ChatThread.updatedAt` orders them).
+    /// Additive relationship -- defaults empty, no migration needed.
+    @Relationship(deleteRule: .cascade, inverse: \ChatThread.meeting)
+    public var chatThreads: [ChatThread] = []
+
     public init(
         id: UUID = UUID(),
         title: String,

@@ -72,6 +72,7 @@ let package = Package(
         .testTarget(
             name: "DataStoreTests",
             dependencies: ["DataStore", .product(name: "Transcription", package: "Transcription")],
+            resources: [.copy("Fixtures")],
             swiftSettings: warningsAsErrors
         ),
         .target(

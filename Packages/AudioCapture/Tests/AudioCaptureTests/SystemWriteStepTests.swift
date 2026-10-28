@@ -63,9 +63,9 @@ struct SystemWriteStepTests {
         #expect(queue.drainAll() == [DrainedBlock(startTime: 0, kind: .end)])
     }
 
-    @Test("A two-channel tap reaches the queue interleaved, as written")
-    func twoChannelTapIsPassedInterleaved() throws {
-        let file = try SystemTestFile(clientRate: 48000, channelCount: 2)
+    @Test("A two-channel tap reaches the queue as its first channel, as written")
+    func twoChannelTapIsPassedAsFirstChannel() throws {
+        let file = try SystemTestFile(clientRate: 48000)
         defer { file.dispose() }
         let queue = LiveAudioQueue(slotCount: 512)
         let step = SystemWriteStep()
@@ -75,8 +75,10 @@ struct SystemWriteStepTests {
         queue.close(at: queue.writtenEnd)
 
         let blocks = queue.drainAll()
-        #expect(blocks.sampleBlocks.allSatisfy { $0.channelCount == 2 && $0.sampleRate == 48000 })
-        #expect(blocks.allSamples == feed.played)
+        // The file's client format is 48 kHz mono, so the converter keeps channel 0.
+        let firstChannel = stride(from: 0, to: feed.played.count, by: 2).map { feed.played[$0] }
+        #expect(blocks.sampleBlocks.allSatisfy { $0.channelCount == 1 && $0.sampleRate == 48000 })
+        #expect(blocks.allSamples == firstChannel)
         blocks.expectContinuous()
         #expect(try abs(file.fileDuration() - 1) < 0.15)
     }

@@ -119,6 +119,7 @@ struct SystemFormatChangeTests {
         defer { harness.dispose() }
         // The mic's first sample came 0.5 s before the system tap's first frame.
         harness.engine.setMicAnchor(harness.nextHostSeconds - 0.5)
+        harness.engine.beginWriteStep()
 
         try harness.deliver(seconds: 2)
         let samples = try harness.finish()
@@ -163,6 +164,7 @@ private final class SystemTrackHarness {
         self.format = format
         url = FileManager.default.temporaryDirectory
             .appendingPathComponent("system-format-change-\(UUID()).aac")
+        engine.beginWriteStep()
         try engine.openAudioFile(url: url, tapSampleRate: format.sampleRate)
     }
 

@@ -1,4 +1,5 @@
 import AudioToolbox
+@preconcurrency import AVFoundation
 import Foundation
 import os
 import QuartzCore
@@ -7,7 +8,8 @@ private let logger = Logger(subsystem: "net.scosman.biscotti.audiocapture", cate
 
 /// Writes one system-tap buffer to the track's ADTS file: leading silence
 /// before the file's first buffer, silence for a capture gap, then the buffer
-/// itself. Each is reported to the live queue at its place on the recording
+/// itself, converted to `SystemFormatConverter.clientFormat`. All three are in
+/// the client format, so the timeline and the live copy have one rate. Each is reported to the live queue at its place on the recording
 /// timeline; the buffer's samples are copied once the file has taken them.
 ///
 /// Writer-thread only, except `begin`, which `LiveSystemCaptureEngine.start`
@@ -18,6 +20,10 @@ final class SystemWriteStep {
     static let maxLeadingSilenceSeconds: Double = 3600
 
     private let gapFillWriter = SystemGapFillWriter()
+
+    /// Converts each tap buffer to the file's fixed client format. Replaced
+    /// for each new file by `resetFormatConverter()`.
+    private var formatConverter = SystemFormatConverter()
     private var liveQueue: LiveAudioQueue?
 
     /// Host-clock seconds of the mic's first written frame: the recording's t = 0.
@@ -49,10 +55,17 @@ final class SystemWriteStep {
         gapFillWriter.reset()
     }
 
-    /// Writes `entry` (interleaved Float32 at `sampleRate`, the file's client
-    /// format) and any silence that must come before it.
+    /// Starts a new converter for a new file. `LiveSystemCaptureEngine`
+    /// calls this when it opens the file, before the writer thread starts.
+    func resetFormatConverter() {
+        formatConverter = SystemFormatConverter()
+    }
+
+    /// Writes `entry` (an interleaved Float32 tap buffer at `sampleRate`),
+    /// converted to the client format, and any silence that must come
+    /// before it.
     func write(_ entry: AudioRingBuffer.Entry, sampleRate: Double, to file: ExtAudioFileRef) {
-        let channelCount = max(entry.channelCount, 1)
+        let clientFormat = SystemFormatConverter.clientFormat
 
         // Before the first real frame, prepend leading silence so the
         // system track's first frame lines up with the mic's first frame
@@ -60,9 +73,9 @@ final class SystemWriteStep {
         if !didWriteLeadingSilence {
             didWriteLeadingSilence = true
             writeLeadingSilence(
-                channelCount: channelCount,
+                channelCount: clientFormat.channelCount,
                 firstFrameHostTime: entry.hostTime,
-                sampleRate: sampleRate,
+                sampleRate: clientFormat.sampleRate,
                 file: file
             )
         }
@@ -74,37 +87,26 @@ final class SystemWriteStep {
         let filledFrames = gapFillWriter.processBuffer(
             hostTimeNanos: AudioConvertHostTimeToNanos(entry.hostTime),
             bufferFrameCount: entry.frameCount,
-            channelCount: entry.channelCount,
-            sampleRate: sampleRate,
+            bufferSampleRate: sampleRate,
+            clientFormat: clientFormat,
             file: file
         )
         if let gapError = gapFillWriter.writeError { recordWriteError(gapError) }
-        recordSilence(frames: filledFrames, sampleRate: sampleRate, kind: .captureGap)
+        recordSilence(frames: filledFrames, sampleRate: clientFormat.sampleRate, kind: .captureGap)
 
-        writeBuffer(entry, channelCount: channelCount, sampleRate: sampleRate, file: file)
+        writeBuffer(entry, sampleRate: sampleRate, file: file)
     }
 
-    private func writeBuffer(
-        _ entry: AudioRingBuffer.Entry,
-        channelCount: UInt32,
-        sampleRate: Double,
-        file: ExtAudioFileRef
-    ) {
-        let frameCount = Int(entry.frameCount)
-        let sampleCount = frameCount * Int(channelCount)
+    private func writeBuffer(_ entry: AudioRingBuffer.Entry, sampleRate: Double, file: ExtAudioFileRef) {
+        let sampleCount = Int(entry.frameCount) * Int(max(entry.channelCount, 1))
         let expectedBytes = UInt32(sampleCount) * UInt32(MemoryLayout<Float>.size)
         guard entry.dataByteSize >= expectedBytes else {
             logger.error("Buffer byte size mismatch -- skipping write")
             return
         }
 
-        let buffer = AudioBuffer(
-            mNumberChannels: entry.channelCount,
-            mDataByteSize: entry.dataByteSize,
-            mData: entry.data
-        )
-        var bufferList = AudioBufferList(mNumberBuffers: 1, mBuffers: buffer)
-        let writeStatus = ExtAudioFileWrite(file, UInt32(frameCount), &bufferList)
+        guard let buffer = formatConverter.convert(entry, sampleRate: sampleRate) else { return }
+        let writeStatus = ExtAudioFileWrite(file, buffer.frameLength, buffer.audioBufferList)
         guard writeStatus == noErr else {
             logger.error("ExtAudioFileWrite failed: \(writeStatus, privacy: .public)")
             recordWriteError(writeStatus)
@@ -113,15 +115,18 @@ final class SystemWriteStep {
 
         // Only audio the file took goes to the live copy, so the live timeline
         // stays the file's.
-        if let liveQueue {
-            entry.data.withMemoryRebound(to: Float.self, capacity: sampleCount) { samples in
+        let clientFormat = buffer.format
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(clientFormat.channelCount)
+        if let liveQueue, let data = buffer.audioBufferList.pointee.mBuffers.mData {
+            data.withMemoryRebound(to: Float.self, capacity: frameCount * channelCount) { samples in
                 liveQueue.pushSamples(
-                    samples, frameCount: frameCount, sampleRate: sampleRate,
-                    channelCount: Int(channelCount), startTime: timeline.seconds
+                    samples, frameCount: frameCount, sampleRate: clientFormat.sampleRate,
+                    channelCount: channelCount, startTime: timeline.seconds
                 )
             }
         }
-        timeline.advance(frames: frameCount, sampleRate: sampleRate)
+        timeline.advance(frames: frameCount, sampleRate: clientFormat.sampleRate)
     }
 
     /// Writes `systemFirstFrame − micAnchor` worth of silent frames to the

@@ -26,8 +26,9 @@ public enum ChatPromptBuilder {
         count: @Sendable ([LLMMessage]) async throws -> Int
     ) async throws -> ChatPrompt {
         let parts = PromptParts(record: record, question: question)
-        // `ChatTurn` carries no answer state, so an answer that failed before any text
-        // shows as a blank one; it and its question are left out.
+        // Callers pass complete or stopped answers only (see `ChatTurn.answer`): the store
+        // keeps a failed answer's partial text, so callers filter by its state. An answer
+        // stopped before any text is blank; it and its question are left out.
         var turns = Array(earlierTurns.filter { !$0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.suffix(maxEarlierTurns))
 
         let entries = ChatEvidence.entries(for: record.transcript)
@@ -131,18 +132,11 @@ private struct PromptParts {
         ChatPrompt(
             messages: messages,
             contextSize: ChatPromptBuilder.contextSize(promptTokens: tokens),
+            promptTokens: tokens,
             options: ChatPromptBuilder.options,
             evidenceTimes: evidenceTimes,
             isPartial: isPartial,
-            basis: basis
+            basis: record.transcript.basis
         )
-    }
-
-    private var basis: ChatBasis {
-        switch record.transcript {
-        case let .live(snapshot): .live(through: snapshot.transcribedThrough)
-        case .draft: .draft
-        case let .saved(data): .transcript(id: data.id)
-        }
     }
 }

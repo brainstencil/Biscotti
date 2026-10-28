@@ -6,6 +6,13 @@ public enum ChatBlock: Sendable, Equatable {
     case bullet(level: Int, AttributedString)
     case numbered(number: Int, AttributedString)
     case heading(AttributedString)
+
+    /// The block's text, without its list marker or level.
+    public var text: AttributedString {
+        switch self {
+        case let .paragraph(text), let .bullet(_, text), let .numbered(_, text), let .heading(text): text
+        }
+    }
 }
 
 /// AttributedString attribute marking a valid cited time; its value is the target second.
@@ -31,6 +38,16 @@ public enum ChatAnswerParser {
             collector.add(AnswerLine(line))
         }
         return collector.finish()
+    }
+
+    /// The evidence times the blocks' citations link to, distinct and ascending.
+    /// Stored with an answer: parsing its text again with these as the evidence
+    /// links the same citations to the same times.
+    public static func citedTimes(in blocks: [ChatBlock]) -> [TimeInterval] {
+        let times = blocks.flatMap { block in
+            block.text.runs.compactMap { $0[ChatTimeAttribute.self] }
+        }
+        return Array(Set(times)).sorted()
     }
 
     /// The block text's inline Markdown, with valid citations linked.

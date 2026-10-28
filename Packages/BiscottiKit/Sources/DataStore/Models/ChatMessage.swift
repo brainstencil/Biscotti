@@ -43,6 +43,9 @@ public enum ChatMessageState: String, Sendable, Codable {
     public var basisThrough: Double?
     /// For a "transcript" basis: the `TranscriptRecord` used.
     public var basisTranscriptID: UUID?
+    /// JSON-encoded backing store for `citedTimes`. SwiftData cannot materialize
+    /// arrays from on-disk stores in SPM modules; `Data` works reliably.
+    private var citedTimesData = Data()
 
     public var thread: ChatThread?
 
@@ -86,6 +89,13 @@ public enum ChatMessageState: String, Sendable, Codable {
         }
     }
 
+    /// Answers only: the evidence times the answer's citations linked to, ascending.
+    /// Parsed again with these as the evidence, the same citations become links.
+    @Transient public var citedTimes: [TimeInterval] {
+        get { (try? JSONDecoder().decode([TimeInterval].self, from: citedTimesData)) ?? [] }
+        set { citedTimesData = newValue.isEmpty ? Data() : (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+
     public init(
         id: UUID = UUID(),
         index: Int,
@@ -94,7 +104,8 @@ public enum ChatMessageState: String, Sendable, Codable {
         createdAt: Date = Date(),
         state: ChatMessageState = .complete,
         errorMessage: String? = nil,
-        basis: ChatBasis? = nil
+        basis: ChatBasis? = nil,
+        citedTimes: [TimeInterval] = []
     ) {
         self.id = id
         self.index = index
@@ -104,6 +115,7 @@ public enum ChatMessageState: String, Sendable, Codable {
         self.role = role
         self.state = state
         self.basis = basis
+        self.citedTimes = citedTimes
     }
 
     /// The stored values of `basisKindRaw`.

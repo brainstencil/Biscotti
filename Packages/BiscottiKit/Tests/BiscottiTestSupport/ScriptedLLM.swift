@@ -17,15 +17,23 @@ public struct ScriptedStream: Sendable {
     }
 
     public var tokens: [String]
-    /// Waited before each token. A consumer cancelled during the wait gets
-    /// `LLMServiceError.cancelled`, like a real connection.
+    /// Waited before each token, on `clock`. A consumer cancelled during the
+    /// wait gets `LLMServiceError.cancelled`, like a real connection.
     public var tokenDelay: Duration?
     public var ending: Ending
+    /// Times `tokenDelay`.
+    public var clock: any Clock<Duration>
 
-    public init(_ tokens: [String], tokenDelay: Duration? = nil, ending: Ending = .done) {
+    public init(
+        _ tokens: [String],
+        tokenDelay: Duration? = nil,
+        ending: Ending = .done,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
         self.tokens = tokens
         self.tokenDelay = tokenDelay
         self.ending = ending
+        self.clock = clock
     }
 }
 
@@ -225,7 +233,7 @@ private final class StreamPlayer: Sendable {
         if index < tokens.count {
             if let delay = scripted.tokenDelay {
                 do {
-                    try await Task.sleep(for: delay)
+                    try await scripted.clock.sleep(for: delay)
                 } catch {
                     throw LLMServiceError.cancelled
                 }
@@ -257,6 +265,8 @@ public final class ScriptedLLMOpener: LLMConnectionOpening {
     private struct State {
         var openErrors: [any Error] = []
         var openDelay: Duration?
+        var openGate: Latch?
+        var clock: any Clock<Duration> = ContinuousClock()
         var requests: [OpenRequest] = []
         var sessions: [ScriptedSession] = []
     }
@@ -274,10 +284,23 @@ public final class ScriptedLLMOpener: LLMConnectionOpening {
         set { state.withLock { $0.openErrors = newValue } }
     }
 
-    /// Waited before each open, to stand in for a slow model load.
+    /// Waited before each open, on `clock`, to stand in for a slow model load.
     public var openDelay: Duration? {
         get { state.withLock { $0.openDelay } }
         set { state.withLock { $0.openDelay = newValue } }
+    }
+
+    /// Each open waits for this to open, and does not stop when its caller
+    /// is cancelled, like a real model load.
+    public var openGate: Latch? {
+        get { state.withLock { $0.openGate } }
+        set { state.withLock { $0.openGate = newValue } }
+    }
+
+    /// Times `openDelay`.
+    public var clock: any Clock<Duration> {
+        get { state.withLock { $0.clock } }
+        set { state.withLock { $0.clock = newValue } }
     }
 
     /// Every open attempt, failed ones included.
@@ -301,14 +324,15 @@ public final class ScriptedLLMOpener: LLMConnectionOpening {
     }
 
     public func open(model: URL, config: EngineConfig) async throws -> any LLMOpenSession {
-        let (error, delay) = state.withLock { state in
+        let (error, delay, clock, gate) = state.withLock { state in
             state.requests.append(OpenRequest(model: model, config: config))
             let error = state.openErrors.isEmpty ? nil : state.openErrors.removeFirst()
-            return (error, state.openDelay)
+            return (error, state.openDelay, state.clock, state.openGate)
         }
         if let delay {
-            try await Task.sleep(for: delay)
+            try await clock.sleep(for: delay)
         }
+        await gate?.wait()
         if let error {
             throw error
         }

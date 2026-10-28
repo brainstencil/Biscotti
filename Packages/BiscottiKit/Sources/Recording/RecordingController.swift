@@ -16,7 +16,17 @@ public final class RecordingController {
     // MARK: - Published state
 
     /// The current recording state (isRecording, elapsed, meetingID).
-    public private(set) var state: RecordingState = .idle
+    public private(set) var state: RecordingState = .idle {
+        didSet {
+            let meetingID = state.isRecording ? state.meetingID : nil
+            if recordingMeetingID != meetingID { recordingMeetingID = meetingID }
+        }
+    }
+
+    /// The meeting being recorded, nil when none is. It changes only when a
+    /// recording starts or stops, while `state` changes with every elapsed
+    /// tick, so views that need only this do not redraw during a recording.
+    public private(set) var recordingMeetingID: UUID?
 
     /// `true` if the engine inferred that system audio capture was denied.
     public private(set) var systemAudioWarning: Bool = false

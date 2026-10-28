@@ -5,10 +5,14 @@ import LocalLLM
 /// on the shared `LLMBroker`, so analysis never loads a second copy of the
 /// model beside chat.
 public struct BrokeredLLMRunner: LLMRunning {
+    /// The purpose of analysis leases. Chat compares a queued wait's purpose
+    /// with it to say it is waiting for the summary.
+    public static let defaultPurpose = "summary"
+
     private let broker: LLMBroker
     private let purpose: String
 
-    public init(broker: LLMBroker, purpose: String = "summary") {
+    public init(broker: LLMBroker, purpose: String = defaultPurpose) {
         self.broker = broker
         self.purpose = purpose
     }

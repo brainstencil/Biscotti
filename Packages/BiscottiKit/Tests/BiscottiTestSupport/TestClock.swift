@@ -48,6 +48,11 @@ public final class TestClock: Clock {
         .zero
     }
 
+    /// Sleeps waiting for a later `advance(by:)`.
+    public var pendingSleepCount: Int {
+        state.withLock { $0.sleepers.count }
+    }
+
     /// Moves the clock forward and resumes every sleep that is now due.
     public func advance(by duration: Swift.Duration) {
         let due = state.withLock { state in
@@ -91,5 +96,31 @@ public final class TestClock: Clock {
             }
             sleeper?.continuation.resume(throwing: CancellationError())
         }
+    }
+}
+
+/// A clock on which every sleep returns at once and moves the clock to its
+/// deadline, so timed code runs in virtual time: 200 sleeps of 0.5 ms take no
+/// real time and leave the clock 100 ms on.
+public final class FastForwardClock: Clock {
+    public typealias Duration = Swift.Duration
+    public typealias Instant = TestClock.Instant
+
+    private let current = Mutex(Instant(offset: .zero))
+
+    public init() {}
+
+    public var now: Instant {
+        current.withLock { $0 }
+    }
+
+    public var minimumResolution: Swift.Duration {
+        .zero
+    }
+
+    public func sleep(until deadline: Instant, tolerance _: Swift.Duration?) async throws {
+        try Task.checkCancellation()
+        current.withLock { $0 = max($0, deadline) }
+        await Task.yield()
     }
 }

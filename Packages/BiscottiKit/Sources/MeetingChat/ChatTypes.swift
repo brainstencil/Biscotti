@@ -15,6 +15,15 @@ public enum ChatTranscript: Sendable {
     var isLive: Bool {
         if case .live = self { true } else { false }
     }
+
+    /// What an answer from this transcript is based on.
+    public var basis: ChatBasis {
+        switch self {
+        case let .live(snapshot): .live(through: snapshot.transcribedThrough)
+        case .draft: .draft
+        case let .saved(data): .transcript(id: data.id)
+        }
+    }
 }
 
 /// Everything about a meeting that the model is given.
@@ -70,6 +79,8 @@ public struct ChatEvidenceLine: Sendable, Equatable {
 public struct ChatPrompt: Sendable {
     public let messages: [LLMMessage]
     public let contextSize: Int
+    /// The messages' size in tokens, as the model's tokenizer counted it.
+    public let promptTokens: Int
     public let options: GenerationOptions
     /// Starts of the lines given, ascending.
     public let evidenceTimes: [TimeInterval]

@@ -1,0 +1,4 @@
+# Backlog: Meeting chat
+
+- [ ] **B1 — Chat's "Turn On" does not catch up the live transcript from the start of the recording**
+  The functional spec says turning on the live transcript from the chat field catches up from the start of the recording, so chat can answer about the earlier discussion. The code starts live transcription from the moment of Turn On (`turnOnLiveTranscriptForChat()` calls `liveTranscription.setEnabled(true)`, which starts a session from now; the pump drops audio before its start time, and the live tap keeps only about 128 blocks per track). A real catch-up would have to transcribe the recording files from the start, which conflicts with the architecture's rule that chat changes nothing in how live text is made. Found in phase 4's code review. Decide: accept "from now" and correct the functional spec and UI text, or schedule catch-up work.

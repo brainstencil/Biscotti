@@ -173,6 +173,39 @@ struct ChatStoreTests {
         #expect(thread.messages.map(\.basis) == [nil, basis])
     }
 
+    @Test("An answer that ended before its prompt was built has no basis")
+    func answerWithoutBasis() async throws {
+        let (store, meetingID) = try await makeStoreWithMeeting()
+        let (threadID, questionID) = try await store.createChatThread(meetingID: meetingID, firstQuestion: "Q1")
+
+        try await store.saveChatAnswer(
+            questionID: questionID, text: "", state: .failed,
+            errorMessage: "The AI model couldn't start.", basis: nil
+        )
+
+        let answer = try #require(try await loadThread(store, threadID).messages.last)
+        #expect(answer.role == .answer)
+        #expect(answer.basis == nil)
+        #expect(answer.citedTimes.isEmpty)
+    }
+
+    @Test("Cited times round-trip, and a retry replaces them")
+    func citedTimesRoundTrip() async throws {
+        let (store, meetingID) = try await makeStoreWithMeeting()
+        let (threadID, questionID) = try await store.createChatThread(meetingID: meetingID, firstQuestion: "Q1")
+
+        try await store.saveChatAnswer(
+            questionID: questionID, text: "At [0:21] and [1:05].", state: .stopped,
+            errorMessage: nil, basis: .draft, citedTimes: [20, 65]
+        )
+        #expect(try await loadThread(store, threadID).messages.map(\.citedTimes) == [[], [20, 65]])
+
+        try await store.saveChatAnswer(
+            questionID: questionID, text: "No times.", state: .complete, errorMessage: nil, basis: .draft
+        )
+        #expect(try await loadThread(store, threadID).messages.map(\.citedTimes) == [[], []])
+    }
+
     @Test("A meeting's threads are listed newest first")
     func threadsNewestFirst() async throws {
         let (store, meetingID) = try await makeStoreWithMeeting()
@@ -309,8 +342,8 @@ struct PreChatStoreTests {
                 meetingID: roadmapID, firstQuestion: "When does chat ship?"
             )
             try await store.saveChatAnswer(
-                questionID: questionID, text: "In the third quarter.", state: .complete,
-                errorMessage: nil, basis: .transcript(id: transcriptID)
+                questionID: questionID, text: "In the third quarter [1:15].", state: .complete,
+                errorMessage: nil, basis: .transcript(id: transcriptID), citedTimes: [75]
             )
             threadID = createdID
         }
@@ -319,8 +352,9 @@ struct PreChatStoreTests {
         try await expectFixtureMeetingsUnchanged(reopened)
         #expect(try await reopened.chatThreads(meetingID: roadmapID).map(\.id) == [threadID])
         let thread = try await loadThread(reopened, threadID)
-        #expect(outline(thread) == ["0 question When does chat ship?", "1 answer In the third quarter."])
+        #expect(outline(thread) == ["0 question When does chat ship?", "1 answer In the third quarter [1:15]."])
         #expect(thread.messages.last?.basis == .transcript(id: transcriptID))
+        #expect(thread.messages.last?.citedTimes == [75])
     }
 
     /// Copies the fixture into a fresh temporary directory and returns the copy's URL.

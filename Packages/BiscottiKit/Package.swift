@@ -205,6 +205,7 @@ let package = Package(
                 "Intelligence",
                 "LiveTranscriptionService",
                 "MCPServer",
+                "MeetingChat",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
@@ -233,6 +234,7 @@ let package = Package(
                 "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
+                "MeetingChat",
                 "MeetingDetection",
                 "Notifications",
                 "Permissions",
@@ -262,6 +264,7 @@ let package = Package(
                 "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
+                "MeetingChat",
                 "MeetingDetailUI",
                 "MeetingDetection",
                 "Notifications",
@@ -777,6 +780,8 @@ let package = Package(
             dependencies: [
                 "DataStore",
                 "Formatting",
+                "Intelligence",
+                "LiveTranscriptionService",
                 .product(name: "LiveTranscriptModel", package: "Transcription"),
                 .product(name: "LocalLLM", package: "LocalLLM")
             ],
@@ -786,8 +791,22 @@ let package = Package(
             name: "MeetingChatTests",
             dependencies: [
                 "MeetingChat",
+                "BiscottiTestSupport",
                 "DataStore",
+                "Intelligence",
+                "LiveTranscriptionService",
                 .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LocalLLM", package: "LocalLLM"),
+                .product(name: "Transcription", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        // Heavy: the real model answers questions. Runs only under `make test-ai`.
+        .testTarget(
+            name: "MeetingChatAITests",
+            dependencies: [
+                "MeetingChat",
+                "DataStore",
                 .product(name: "LocalLLM", package: "LocalLLM")
             ],
             swiftSettings: warningsAsErrors

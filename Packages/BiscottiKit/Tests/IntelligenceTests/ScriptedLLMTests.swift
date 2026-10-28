@@ -79,6 +79,39 @@ struct ScriptedLLMTests {
         }
     }
 
+    @Test("token and open delays wait on the injected clock")
+    func delaysFollowTheClock() async throws {
+        let clock = TestClock()
+        let opener = ScriptedLLMOpener(script: LLMScript(streams: [
+            ScriptedStream(["slow"], tokenDelay: .seconds(5), clock: clock)
+        ]))
+        opener.clock = clock
+        opener.openDelay = .seconds(5)
+        let opening = Task { try await opener.open(model: URL(fileURLWithPath: "/models/a.gguf"), config: .modelOnly) }
+        try await waitUntil("the open to wait") { clock.pendingSleepCount == 1 }
+        #expect(opener.openCount == 0)
+
+        clock.advance(by: .seconds(5))
+        let session = try #require(try await opening.value as? ScriptedSession)
+        let playing = Task { try await play(session) }
+        try await waitUntil("the token to wait") { clock.pendingSleepCount == 1 }
+        clock.advance(by: .seconds(5))
+
+        #expect(try await playing.value == [.token("slow"), .done("slow")])
+    }
+
+    @Test("a fast-forward clock runs sleeps at once and moves its time")
+    func fastForwardClock() async throws {
+        let clock = FastForwardClock()
+        let start = clock.now
+
+        for _ in 0 ..< 200 {
+            try await clock.sleep(for: .microseconds(500))
+        }
+
+        #expect(start.duration(to: clock.now) == .milliseconds(100))
+    }
+
     @Test("sessions from one opener share the script, and open errors fail one open each")
     func openerSharesScript() async throws {
         let opener = ScriptedLLMOpener(script: LLMScript(replies: ["first", "second"]))

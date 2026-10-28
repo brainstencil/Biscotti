@@ -279,7 +279,7 @@ public actor LLMBroker {
         } catch let error as CancellationError {
             throw error
         } catch {
-            logger.error("Model open failed: \(String(describing: type(of: error)), privacy: .public)")
+            logger.error("Model open failed: \(String(describing: type(of: error)), privacy: .public): \(error.localizedDescription, privacy: .private)")
             throw LLMBrokerError.connectionFailed(error.localizedDescription)
         }
 
@@ -347,12 +347,13 @@ public actor LLMBroker {
 
     /// Why the connection must be closed when a lease ends, or nil to keep it.
     ///
-    /// Deviates from the design, which kept the connection after any
-    /// cancellation: `LLMConnection` holds its one-slot gate from a stream's
-    /// first pull until the stream ends, and a consumer cancelled between
-    /// pulls never reaches that end. The gate then stays held, the service
-    /// keeps generating, and every later call on the connection waits forever.
-    /// Closing it stops the generation and frees the next lease to reconnect.
+    /// A stream pulled but not read to its end closes the connection, even
+    /// after a cancellation: `LLMConnection` holds its one-slot gate from a
+    /// stream's first pull until the stream ends, and a consumer cancelled
+    /// between pulls never reaches that end. The gate then stays held, the
+    /// service keeps generating, and every later call on the connection waits
+    /// forever. Closing it stops the generation and frees the next lease to
+    /// reconnect.
     private static func dropReason(error: (any Error)?, streams: StreamLedger) -> String? {
         if streams.hasUnfinished {
             return "a stream was not read to its end"

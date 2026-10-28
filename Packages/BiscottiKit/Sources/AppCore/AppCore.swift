@@ -7,6 +7,7 @@ import Intelligence
 import LiveTranscriptionService
 import MCPServer
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import os
@@ -318,6 +319,9 @@ public final class AppCore {
     /// Injectable environment for the send-to-app feature (Obsidian, Bear, Notes).
     public let sendEnvironment: SendEnvironment
 
+    /// Questions about meetings, answered by the local model through `llmBroker`.
+    public let chat: MeetingChatService
+
     // MARK: - Private
 
     private let scheduler: any AppScheduler
@@ -406,8 +410,10 @@ public final class AppCore {
         updateChecker: UpdateChecker? = nil,
         mcpServer: MCPServerController? = nil,
         liveTranscription: LiveTranscriptionService? = nil,
-        sendEnvironment: SendEnvironment = .live
+        sendEnvironment: SendEnvironment = .live,
+        chat: MeetingChatService? = nil
     ) {
+        let liveTranscription = liveTranscription ?? .inert()
         self.store = store
         self.permissions = permissions
         self.recording = recording
@@ -421,10 +427,12 @@ public final class AppCore {
         self.scheduler = scheduler
         self.updateChecker = updateChecker ?? UpdateChecker()
         self.mcpServer = mcpServer ?? MCPServerController(store: store)
-        self.liveTranscription = liveTranscription ?? .inert()
+        self.liveTranscription = liveTranscription
         self.sendEnvironment = sendEnvironment
+        self.chat = chat ?? MeetingChatService(store: store, broker: llmBroker, modelManager: modelManager, live: liveTranscription, recording: recording, transcription: transcription)
         prepareModelsAfterLiveModelDownloads()
         resetWorkerWhenLiveFindsItStuck()
+        connectChat()
     }
 
     // MARK: - Lifecycle
@@ -841,7 +849,10 @@ extension AppCore {
         if liveTranscription.isFinishing(meetingID) {
             transcription.recordingIsEnding(meetingID)
         }
-        return Task { @MainActor [transcription, intelligence, liveTranscription] in
+        return Task { @MainActor [transcription, intelligence, liveTranscription, chat] in
+            // A question that waited for the recording to stop is answered
+            // from the draft, beside the final pass (a different model).
+            await chat.recordingDidStop(meetingID: meetingID)
             // The live session holds the worker until it finishes, at most
             // for the stop deadline. A finish that ran out of time may have
             // left the worker stuck in a decode; once the queue closes its
@@ -853,6 +864,8 @@ extension AppCore {
             // meanwhile, the stop is ignored and this pass waits in the queue.
             transcription.recordingDidStop(meetingID)
             await transcription.transcribe(meetingID: meetingID)
+            // Chat learns of the saved transcript before the draft it used goes.
+            await chat.refreshAvailability()
             // A failed pass keeps the draft, so the live text stays readable.
             if transcription.jobs[meetingID] == .completed {
                 liveTranscription.releaseDraft(for: meetingID)
@@ -905,6 +918,9 @@ extension AppCore {
         recordingStartup = .started
         pendingStartupEventKey = nil
         pendingStartupTitle = nil
+        // On Macs that free the AI model during recordings, a model kept
+        // loaded by an earlier summary or answer is closed now.
+        await chat.recordingDidStart()
 
         // Associate with the calendar event if resolved
         if let resolvedEvent {
@@ -2018,6 +2034,10 @@ extension AppCore {
 
         // 2. Delete files best-effort (missing files are fine).
         deleteRecordingFiles(filePaths)
+
+        // Its chat answer, running or waiting, stops without saving and
+        // frees the model, before its thread goes with the row.
+        chat.meetingWasDeleted(meetingID)
 
         // 3. Delete the DB row.
         do {

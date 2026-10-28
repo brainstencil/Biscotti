@@ -160,6 +160,17 @@ struct ChatAnswerParserTests {
         #expect(ChatAnswerParser.nearestEvidence(to: 0, in: []) == nil)
     }
 
+    @Test("cited times are the distinct linked times, ascending, and parse back to the same links")
+    func citedTimesParseBack() {
+        let answer = "- Blue [1:05] and [0:21].\n\nAgain [0:22], never [9:00]."
+        let blocks = ChatAnswerParser.blocks(answer, evidenceTimes: [0, 20, 64, 300])
+
+        let cited = ChatAnswerParser.citedTimes(in: blocks)
+
+        #expect(cited == [20, 64])
+        #expect(ChatAnswerParser.blocks(answer, evidenceTimes: cited) == blocks)
+    }
+
     // MARK: - Helpers
 
     struct TimeRun: Equatable {

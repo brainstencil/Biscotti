@@ -31,8 +31,10 @@ public struct ChatMessageData: Sendable, Equatable, Identifiable {
     /// `.complete` for questions.
     public let state: ChatMessageState
     public let errorMessage: String?
-    /// `nil` for questions.
+    /// `nil` for questions, and for answers that ended before a prompt was built.
     public let basis: ChatBasis?
+    /// Answers only: the evidence times its citations linked to, ascending.
+    public let citedTimes: [TimeInterval]
 
     public init(
         id: UUID,
@@ -42,7 +44,8 @@ public struct ChatMessageData: Sendable, Equatable, Identifiable {
         createdAt: Date,
         state: ChatMessageState = .complete,
         errorMessage: String? = nil,
-        basis: ChatBasis? = nil
+        basis: ChatBasis? = nil,
+        citedTimes: [TimeInterval] = []
     ) {
         self.id = id
         self.index = index
@@ -52,6 +55,7 @@ public struct ChatMessageData: Sendable, Equatable, Identifiable {
         self.state = state
         self.errorMessage = errorMessage
         self.basis = basis
+        self.citedTimes = citedTimes
     }
 }
 
@@ -128,6 +132,10 @@ public extension DataStore {
     /// keeps its ID. Otherwise the answer is inserted right after the question, and later
     /// messages move up one index: a question interrupted by a quit, then answered after
     /// newer questions, keeps its answer next to it.
+    /// - Parameters:
+    ///   - basis: The transcript the answer was based on; nil for an answer that
+    ///     ended before its prompt was built.
+    ///   - citedTimes: The evidence times its citations linked to.
     /// - Returns: The answer's ID.
     /// - Throws: `DataStoreError.notFound(questionID)` when it is not a question in a thread.
     @discardableResult
@@ -136,7 +144,8 @@ public extension DataStore {
         text: String,
         state: ChatMessageState,
         errorMessage: String?,
-        basis: ChatBasis
+        basis: ChatBasis?,
+        citedTimes: [TimeInterval] = []
     ) throws -> UUID {
         guard let question = try chatMessageRecord(id: questionID),
               question.role == .question,
@@ -154,13 +163,14 @@ public extension DataStore {
             answer.state = state
             answer.errorMessage = errorMessage
             answer.basis = basis
+            answer.citedTimes = citedTimes
         } else {
             for later in thread.messages where later.index >= answerIndex {
                 later.index += 1
             }
             answer = ChatMessage(
                 index: answerIndex, role: .answer, text: text, createdAt: now,
-                state: state, errorMessage: errorMessage, basis: basis
+                state: state, errorMessage: errorMessage, basis: basis, citedTimes: citedTimes
             )
             context.insert(answer)
             thread.messages.append(answer)
@@ -249,7 +259,8 @@ private extension DataStore {
                     createdAt: message.createdAt,
                     state: message.state,
                     errorMessage: message.errorMessage,
-                    basis: message.basis
+                    basis: message.basis,
+                    citedTimes: message.citedTimes
                 )
             }
         return ChatThreadData(summary: mapChatSummary(thread, meetingID: meetingID), messages: messages)

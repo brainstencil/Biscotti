@@ -8,6 +8,7 @@ import LiveTranscriptionService
 import LocalLLM
 import MCPServer
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import Permissions
@@ -44,6 +45,11 @@ public struct CoreFixture {
     /// Drives `llmBroker`'s idle close.
     public let llmClock: TestClock
     public let fakeModelProvider: FakeCoreModelProvider
+
+    /// `core.chat`, on `llmBroker` and the fixture's memory.
+    public var chat: MeetingChatService {
+        core.chat
+    }
 
     public func cleanup() {
         try? FileManager.default.removeItem(at: storageRoot)
@@ -464,6 +470,8 @@ public func makeCoreFixture(
     mcpServerPort: Int = 0,
     liveTranscription: LiveTranscriptionService? = nil,
     sendEnvironment: SendEnvironment? = nil,
+    chatPolicy: ChatResourcePolicy? = nil,
+    chatClock: any Clock<Duration> = ContinuousClock(),
     testName: String = "Test"
 ) throws -> CoreFixture {
     let store = try DataStore(storage: .inMemory)
@@ -577,6 +585,19 @@ public func makeCoreFixture(
         }
     )
 
+    let live = liveTranscription ?? .inert()
+    // The fixture's memory, so chat never reads this Mac's.
+    let chat = MeetingChatService(
+        store: store,
+        broker: llmBroker,
+        modelManager: modelManager,
+        live: live,
+        recording: recording,
+        transcription: transcription,
+        policy: chatPolicy ?? ChatResourcePolicy(physicalMemory: hardwareRAMBytes),
+        clock: chatClock
+    )
+
     let core = AppCore(
         store: store,
         permissions: permissions,
@@ -590,8 +611,9 @@ public func makeCoreFixture(
         llmBroker: llmBroker,
         scheduler: scheduler,
         mcpServer: MCPServerController(store: store, port: mcpServerPort),
-        liveTranscription: liveTranscription,
-        sendEnvironment: sendEnvironment ?? .live
+        liveTranscription: live,
+        sendEnvironment: sendEnvironment ?? .live,
+        chat: chat
     )
 
     return CoreFixture(

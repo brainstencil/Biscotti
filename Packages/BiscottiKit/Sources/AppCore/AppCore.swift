@@ -311,6 +311,9 @@ public final class AppCore {
     /// Only starts when the user enables it in Settings.
     public let mcpServer: MCPServerController
 
+    /// Injectable environment for the send-to-app feature (Obsidian, Bear, Notes).
+    public let sendEnvironment: SendEnvironment
+
     // MARK: - Private
 
     private let scheduler: any AppScheduler
@@ -397,7 +400,8 @@ public final class AppCore {
         scheduler: any AppScheduler = LiveAppScheduler(),
         updateChecker: UpdateChecker? = nil,
         mcpServer: MCPServerController? = nil,
-        liveTranscription: LiveTranscriptionService? = nil
+        liveTranscription: LiveTranscriptionService? = nil,
+        sendEnvironment: SendEnvironment = .live
     ) {
         self.store = store
         self.permissions = permissions
@@ -412,6 +416,7 @@ public final class AppCore {
         self.updateChecker = updateChecker ?? UpdateChecker()
         self.mcpServer = mcpServer ?? MCPServerController(store: store)
         self.liveTranscription = liveTranscription ?? .inert()
+        self.sendEnvironment = sendEnvironment
         prepareModelsAfterLiveModelDownloads()
         resetWorkerWhenLiveFindsItStuck()
     }

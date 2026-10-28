@@ -501,6 +501,7 @@ public func makeCoreFixture(
     hardwareDiskBytes: Int64? = 100_000_000_000,
     mcpServerPort: Int = 0,
     liveTranscription: LiveTranscriptionService? = nil,
+    sendEnvironment: SendEnvironment? = nil,
     testName: String = "Test"
 ) throws -> CoreFixture {
     let store = try DataStore(storage: .inMemory)
@@ -624,7 +625,8 @@ public func makeCoreFixture(
         modelManager: modelManager,
         scheduler: scheduler,
         mcpServer: MCPServerController(store: store, port: mcpServerPort),
-        liveTranscription: liveTranscription
+        liveTranscription: liveTranscription,
+        sendEnvironment: sendEnvironment ?? .live
     )
 
     return CoreFixture(

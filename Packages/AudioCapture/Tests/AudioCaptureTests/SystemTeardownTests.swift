@@ -33,7 +33,9 @@ struct SystemTeardownTests {
 
         // stop()'s teardown starts while the first teardown still waits. The
         // 0.5 s check starts only once this thread runs, so a slow thread
-        // start cannot pass it.
+        // start cannot pass it. It does not prove that the thread reached the
+        // lock: `Mutex` cannot report a waiter. A pause of 0.5 s between the
+        // signal and `teardown()` would let the check pass without contention.
         let stopStarted = DispatchSemaphore(value: 0)
         let stopDone = DispatchSemaphore(value: 0)
         Thread.detachNewThread {

@@ -51,7 +51,7 @@ The transcript drawer's card style: `cardFill`, 1 pt `cardStroke` border, `drawe
   - **Times** in an answer are chips: 11.5 pt JetBrains Mono, sage text on `accentWashSoft`, 5 pt radius, 1 × 5 pt padding, with no parentheses. The pointer becomes a hand over them.
   - **Under a finished answer**, 8 pt below, a left-aligned row: a 14 pt copy icon in `inkTertiary`, then 11.5 pt `inkSecondary` text: "Based on the transcript through 0:46" during a recording, "Based on the draft transcript" for a draft, nothing otherwise. Copying shows "Copied" briefly in place of the icon.
   - **Turns** are 26 pt apart.
-  - **Before the first word**, a status line in `inkSecondary` with a small spinner: "Loading the AI model…", "Waiting for the summary to finish…" or "Thinking…".
+  - **Before the first word**, a status line in `inkSecondary` with a small spinner: "Loading the AI model…", "Waiting for the summary to finish…", "Answers when the recording stops" (only on Macs where the measurement decides chat waits for Stop) or "Thinking…".
   - **While an answer streams**, three 4 pt `inkTertiary` dots follow its last word. The list follows the newest text unless the user scrolls up, in which case a round down-arrow button appears at the bottom center; it jumps back to the newest text.
   - **A stopped answer** keeps its text, and its row reads "Stopped".
   - **A failed answer** shows the error in a short sentence, in `signalRedText`, with a "Retry" button.

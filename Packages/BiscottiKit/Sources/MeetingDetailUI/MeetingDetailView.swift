@@ -5,6 +5,7 @@ import DesignSystem
 import ImportExport
 import Intelligence
 import MarkdownEditorUI
+import PeopleUI
 import SummaryPromptUI
 import SwiftUI
 import TranscriptionService
@@ -53,6 +54,120 @@ public struct MeetingDetailView: View {
     }
 
     public var body: some View {
+        observedContent
+            .sheet(isPresented: $viewModel.showEventPicker) {
+                EventPickerSheet(
+                    events: viewModel.availableEventPickerItems,
+                    hasCalendarAccess: viewModel.hasCalendarAccess,
+                    hasExistingAssociation: viewModel.hasCalendarContext,
+                    onSelect: { eventKey in
+                        Task {
+                            await viewModel.correctAssociation(
+                                eventKey: eventKey
+                            )
+                        }
+                    },
+                    onRemove: {
+                        Task {
+                            await viewModel.removeAssociation()
+                        }
+                    },
+                    onCancel: {
+                        viewModel.showEventPicker = false
+                    }
+                )
+            }
+            .alert(
+                "Re-transcribe with keywords from this event?",
+                isPresented: Binding(
+                    get: { viewModel.showReTranscribeAfterCorrection },
+                    set: { newValue in
+                        if !newValue {
+                            viewModel.dismissReTranscribePrompt()
+                        }
+                    }
+                )
+            ) {
+                Button("OK") {
+                    Task {
+                        await viewModel.reTranscribeAfterCorrection()
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    viewModel.dismissReTranscribePrompt()
+                }
+            } message: {
+                Text(
+                    "We\u{2019}ll use this event\u{2019}s title, description and attendee list to improve transcription accuracy."
+                )
+            }
+            .confirmationDialog(
+                "Delete this meeting?",
+                isPresented: $viewModel.showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    Task { await viewModel.confirmDelete() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This permanently deletes the recording and transcript."
+                )
+            }
+            .sheet(item: $viewModel.summaryPromptModel) { model in
+                SummaryPromptSheet(
+                    model: model,
+                    onSave: { _ in },
+                    onRegenerate: { text, alsoSave in
+                        viewModel.regenerate(
+                            withPrompt: text, alsoSave: alsoSave
+                        )
+                    },
+                    onCancel: {
+                        viewModel.summaryPromptModel = nil
+                    }
+                )
+            }
+            .sheet(
+                item: Binding(
+                    get: {
+                        viewModel.speakerSheetTranscriptID
+                            .map { SpeakerSheetBinding(id: $0) }
+                    },
+                    set: { newValue in
+                        viewModel.speakerSheetTranscriptID = newValue?.id
+                    }
+                )
+            ) { _ in
+                speakerSheet
+            }
+        #if DEBUG
+            .sheet(item: $viewModel.voiceprintDebug) { model in
+                VoiceprintDebugView(
+                    report: model.report,
+                    onDismiss: { viewModel.voiceprintDebug = nil }
+                )
+            }
+        #endif
+            .alert(
+                sendAlertTitle,
+                isPresented: Binding(
+                    get: { viewModel.sendAlert != nil },
+                    set: { if !$0 { viewModel.sendAlert = nil } }
+                ),
+                presenting: viewModel.sendAlert
+            ) { alert in
+                sendAlertActions(alert)
+            } message: { alert in
+                sendAlertMessage(alert)
+            }
+    }
+
+    /// The layout plus its load and change handlers. Split from `body` so
+    /// the compiler type-checks the two modifier chains separately.
+    private var observedContent: some View {
         GeometryReader { geo in
             if viewModel.isLoading {
                 // B: unified loading state — one centered spinner for the
@@ -75,6 +190,9 @@ public struct MeetingDetailView: View {
         )
         .task { await viewModel.load() }
         .task { await viewModel.applyPendingIntentIfNeeded() }
+        .onChange(of: viewModel.peopleVersion) { _, _ in
+            Task { await viewModel.reloadAfterPeopleChange() }
+        }
         .onChange(of: viewModel.currentJobStatus) { _, newStatus in
             Task { await viewModel.onJobStatusChange(newStatus) }
         }
@@ -108,137 +226,6 @@ public struct MeetingDetailView: View {
             copyResetTask = nil
             Task { await viewModel.flushPendingEdits() }
         }
-        .sheet(isPresented: $viewModel.showEventPicker) {
-            EventPickerSheet(
-                events: viewModel.availableEventPickerItems,
-                hasCalendarAccess: viewModel.hasCalendarAccess,
-                hasExistingAssociation: viewModel.hasCalendarContext,
-                onSelect: { eventKey in
-                    Task {
-                        await viewModel.correctAssociation(
-                            eventKey: eventKey
-                        )
-                    }
-                },
-                onRemove: {
-                    Task {
-                        await viewModel.removeAssociation()
-                    }
-                },
-                onCancel: {
-                    viewModel.showEventPicker = false
-                }
-            )
-        }
-        .alert(
-            "Re-transcribe with keywords from this event?",
-            isPresented: Binding(
-                get: { viewModel.showReTranscribeAfterCorrection },
-                set: { newValue in
-                    if !newValue {
-                        viewModel.dismissReTranscribePrompt()
-                    }
-                }
-            )
-        ) {
-            Button("OK") {
-                Task {
-                    await viewModel.reTranscribeAfterCorrection()
-                }
-            }
-            .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {
-                viewModel.dismissReTranscribePrompt()
-            }
-        } message: {
-            Text(
-                "We\u{2019}ll use this event\u{2019}s title, description and attendee list to improve transcription accuracy."
-            )
-        }
-        .confirmationDialog(
-            "Delete this meeting?",
-            isPresented: $viewModel.showDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                Task { await viewModel.confirmDelete() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "This permanently deletes the recording and transcript."
-            )
-        }
-        .sheet(item: $viewModel.summaryPromptModel) { model in
-            SummaryPromptSheet(
-                model: model,
-                onSave: { _ in },
-                onRegenerate: { text, alsoSave in
-                    viewModel.regenerate(
-                        withPrompt: text, alsoSave: alsoSave
-                    )
-                },
-                onCancel: {
-                    viewModel.summaryPromptModel = nil
-                }
-            )
-        }
-        .sheet(
-            item: Binding(
-                get: {
-                    viewModel.speakerSheetTranscriptID
-                        .map { SpeakerSheetBinding(id: $0) }
-                },
-                set: { newValue in
-                    viewModel.speakerSheetTranscriptID = newValue?.id
-                }
-            )
-        ) { _ in
-            if let sheetData = viewModel.speakerSheetData {
-                SpeakerMappingSheet(
-                    data: sheetData,
-                    onAssign: { speakerID, personID in
-                        await viewModel.assignSpeaker(
-                            speakerID: speakerID,
-                            personID: personID
-                        )
-                    },
-                    onAddPerson: { speakerID, name in
-                        await viewModel.assignNewPerson(
-                            speakerID: speakerID, name: name
-                        )
-                    },
-                    onUnassign: { speakerID in
-                        await viewModel.unassignSpeaker(
-                            speakerID: speakerID
-                        )
-                    },
-                    onDismiss: {
-                        viewModel.speakerSheetTranscriptID = nil
-                    }
-                )
-            }
-        }
-        #if DEBUG
-        .sheet(item: $viewModel.voiceprintDebug) { model in
-                VoiceprintDebugView(
-                    report: model.report,
-                    onDismiss: { viewModel.voiceprintDebug = nil }
-                )
-            }
-        #endif
-            .alert(
-                sendAlertTitle,
-                isPresented: Binding(
-                    get: { viewModel.sendAlert != nil },
-                    set: { if !$0 { viewModel.sendAlert = nil } }
-                ),
-                presenting: viewModel.sendAlert
-            ) { alert in
-                sendAlertActions(alert)
-            } message: { alert in
-                sendAlertMessage(alert)
-            }
     }
 
     // MARK: - Loaded content
@@ -795,6 +782,47 @@ private extension MeetingDetailView {
         )
         .frame(minHeight: max(100, fill), alignment: .top)
         .background(TextViewFocusForwarder())
+    }
+}
+
+// MARK: - Speaker sheet
+
+private extension MeetingDetailView {
+    /// The speaker-mapping sheet, with the person editor nested on top.
+    @ViewBuilder
+    var speakerSheet: some View {
+        if let sheetData = viewModel.speakerSheetData {
+            SpeakerMappingSheet(
+                data: sheetData,
+                onAssign: { speakerID, personID in
+                    await viewModel.assignSpeaker(
+                        speakerID: speakerID,
+                        personID: personID
+                    )
+                },
+                onAddPerson: { speakerID, name in
+                    await viewModel.assignNewPerson(
+                        speakerID: speakerID, name: name
+                    )
+                },
+                onUnassign: { speakerID in
+                    await viewModel.unassignSpeaker(
+                        speakerID: speakerID
+                    )
+                },
+                onEditPerson: { person in
+                    Task { await viewModel.editPerson(person) }
+                },
+                onDismiss: {
+                    viewModel.speakerSheetTranscriptID = nil
+                }
+            )
+            .sheet(item: $viewModel.editingPerson) { editor in
+                PersonEditorSheet(model: editor) { meetingID in
+                    viewModel.openMeetingFromPersonEditor(meetingID)
+                }
+            }
+        }
     }
 }
 

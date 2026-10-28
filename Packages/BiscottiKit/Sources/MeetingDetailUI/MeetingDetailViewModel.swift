@@ -8,6 +8,7 @@ import Formatting
 import Foundation
 import ImportExport
 import Intelligence
+import PeopleUI
 import SummaryPromptUI
 import TranscriptionService
 import Vocabulary
@@ -227,6 +228,9 @@ public final class MeetingDetailViewModel {
     /// Assembled data for the speaker mapping sheet, populated when the
     /// sheet opens. `nil` when the sheet is closed.
     public private(set) var speakerSheetData: SpeakerSheetData?
+
+    /// The person editor opened from the speaker sheet. Non-nil presents it.
+    public var editingPerson: PersonEditorModel?
 
     // MARK: - Summary tab
 
@@ -1832,6 +1836,43 @@ public extension MeetingDetailViewModel {
         } catch {
             // Non-fatal
         }
+    }
+
+    /// Opens the person editor for `person`. Pending summary and title
+    /// edits are saved first, so a debounced write cannot overwrite the
+    /// rename's text replacement.
+    func editPerson(_ person: PersonData) async {
+        summaryAutosaveTask?.cancel()
+        summaryAutosaveTask = nil
+        await saveSummary()
+        await saveTitle()
+        editingPerson = PersonEditorModel(core: core, personID: person.id)
+    }
+
+    /// Changes `AppCore.peopleVersion` after any rename, merge, or delete.
+    var peopleVersion: Int {
+        core.peopleVersion
+    }
+
+    /// Reloads names, summary, and title after a people edit made here or
+    /// elsewhere (watched through `peopleVersion`).
+    func reloadAfterPeopleChange() async {
+        await reloadAfterSpeakerChange()
+        try? await refreshData()
+    }
+
+    /// Opens a meeting from the person editor's list: closes the editor
+    /// and the speaker sheet, then navigates (or just shows the transcript
+    /// when it is this meeting).
+    func openMeetingFromPersonEditor(_ id: UUID) {
+        editingPerson = nil
+        speakerSheetTranscriptID = nil
+        guard id != meetingID else {
+            selectedTab = .transcript
+            return
+        }
+        let core = core
+        Task { await core.apply(.meeting(id: id, target: .tab(.transcript))) }
     }
 
     /// Reloads detail + rebuilds the transcript cache and refreshes

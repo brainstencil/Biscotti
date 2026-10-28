@@ -5,6 +5,7 @@ import DataStore
 import DesignSystem
 import Intelligence
 import ModelManagementUI
+import PeopleUI
 import Permissions
 import SummaryPromptUI
 import SwiftUI
@@ -23,6 +24,7 @@ public struct SettingsView: View {
     @State var showConnectCalendar = false
     @State private var summaryPromptModel: SummaryPromptModel?
     @State var showVocabularyListSheet = false
+    @State var peopleListModel: PeopleListModel?
     /// Internal (not private) so the cross-file MCP row extension
     /// (`SettingsMCPRow.swift`) can present the help sheet.
     @State var showMCPHelp = false
@@ -44,6 +46,7 @@ public struct SettingsView: View {
         "Notifications",
         "AI Enhancements",
         "Custom Vocabulary",
+        "People",
         "Import/Export",
         "Calendars"
     ]
@@ -75,6 +78,7 @@ public struct SettingsView: View {
                     notificationsSection
                     aiEnhancementsSection
                     customVocabularySection
+                    peopleSection
                     importExportSection
                     calendarSection
 

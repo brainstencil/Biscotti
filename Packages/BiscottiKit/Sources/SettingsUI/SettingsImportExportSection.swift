@@ -18,7 +18,7 @@ extension SettingsView {
     static let learnMoreTitle = "Learn more"
 
     var importExportSection: some View {
-        Section(Self.sectionTitles[5]) {
+        Section(Self.sectionTitles[6]) {
             importMeetingsRow
             exportMeetingsRow
         }

@@ -1,3 +1,4 @@
+import BiscottiTestSupport
 import Foundation
 import Testing
 @testable import SettingsUI
@@ -9,7 +10,7 @@ struct SettingsLayoutTests {
     /// the titles AND their order as they appear on screen. The physical
     /// section ordering in `body` (which computed property appears first)
     /// is verified in the Phase 12 manual pass.
-    @Test("section titles match spec order: General, Permissions, Notifications, AI, Vocab, Import/Export, Calendars")
+    @Test("section titles match spec order: General, Permissions, Notifications, AI, Vocab, People, Import/Export, Calendars")
     func sectionTitlesMatchSpec() {
         let expected = [
             "General",
@@ -17,6 +18,7 @@ struct SettingsLayoutTests {
             "Notifications",
             "AI Enhancements",
             "Custom Vocabulary",
+            "People",
             "Import/Export",
             "Calendars"
         ]
@@ -55,5 +57,22 @@ struct SettingsLayoutTests {
                     string: "https://github.com/scosman/Biscotti/blob/main/App/ImportingExporting.md"
                 )
         )
+    }
+}
+
+@Suite("SettingsViewModel -- People")
+@MainActor
+struct SettingsPeopleCountTests {
+    @Test("reloadPeopleCount reflects the number of people")
+    func peopleCount() async throws {
+        let fixture = try makeCoreFixture()
+        defer { fixture.cleanup() }
+        let viewModel = SettingsViewModel(core: fixture.core)
+        await viewModel.reloadPeopleCount()
+        #expect(viewModel.peopleCount == 0)
+        _ = try await fixture.store.findOrCreatePerson(name: "Paul", email: nil)
+        _ = try await fixture.store.findOrCreatePerson(name: "Ann", email: nil)
+        await viewModel.reloadPeopleCount()
+        #expect(viewModel.peopleCount == 2)
     }
 }

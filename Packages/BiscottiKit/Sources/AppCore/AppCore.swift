@@ -175,6 +175,10 @@ public final class AppCore {
     /// like title updates from calendar association.
     public private(set) var summariesVersion: Int = 0
 
+    /// Increments after every successful people edit (rename, email,
+    /// merge, delete). Open views watch it to reload names.
+    public package(set) var peopleVersion: Int = 0
+
     // MARK: - Meetings screen state
 
     /// The selected meetings shown in the detail pane. Empty = no selection

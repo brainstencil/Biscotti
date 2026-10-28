@@ -120,6 +120,11 @@ public final class SettingsViewModel {
     /// The user's stored vocabulary terms, in insertion order.
     public private(set) var vocabularyTerms: [String] = []
 
+    // MARK: - People
+
+    /// Number of known people, for the People row's "Manage (N)" button.
+    public internal(set) var peopleCount = 0
+
     // MARK: - Calendar state
 
     /// All calendars grouped by source, for the include/exclude toggles.

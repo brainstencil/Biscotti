@@ -32,6 +32,7 @@ let package = Package(
         .library(name: "Intelligence", targets: ["Intelligence"]),
         .library(name: "ModelManagementUI", targets: ["ModelManagementUI"]),
         .library(name: "SummaryPromptUI", targets: ["SummaryPromptUI"]),
+        .library(name: "PeopleUI", targets: ["PeopleUI"]),
         .library(name: "Vocabulary", targets: ["Vocabulary"]),
         .library(name: "MCPServer", targets: ["MCPServer"]),
         .library(name: "VoiceprintMatching", targets: ["VoiceprintMatching"]),
@@ -313,6 +314,7 @@ let package = Package(
                 "ImportExport",
                 "Intelligence",
                 "MarkdownEditorUI",
+                "PeopleUI",
                 "SummaryPromptUI",
                 "TranscriptionService",
                 "VoiceprintMatching",
@@ -323,6 +325,7 @@ let package = Package(
         .testTarget(
             name: "MeetingDetailUITests",
             dependencies: [
+                "PeopleUI",
                 "MeetingDetailUI",
                 "AppCore",
                 "AppLinks",
@@ -430,6 +433,7 @@ let package = Package(
             name: "SettingsUI",
             dependencies: [
                 "AppCore",
+                "AppLinks",
                 "Calendar",
                 "DataStore",
                 "DesignSystem",
@@ -438,6 +442,7 @@ let package = Package(
                 "LocalLLM",
                 "MCPServer",
                 "ModelManagementUI",
+                "PeopleUI",
                 "Permissions",
                 "SummaryPromptUI",
                 "Vocabulary"
@@ -652,6 +657,28 @@ let package = Package(
             name: "SummaryPromptUITests",
             dependencies: [
                 "SummaryPromptUI"
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
+            name: "PeopleUI",
+            dependencies: [
+                "AppCore",
+                "AppLinks",
+                "DataStore",
+                "DesignSystem",
+                "Formatting"
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "PeopleUITests",
+            dependencies: [
+                "PeopleUI",
+                "AppCore",
+                "BiscottiTestSupport",
+                "DataStore",
+                .product(name: "Transcription", package: "Transcription")
             ],
             swiftSettings: warningsAsErrors
         ),

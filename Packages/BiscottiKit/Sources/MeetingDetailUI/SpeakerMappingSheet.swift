@@ -12,6 +12,8 @@ struct SpeakerMappingSheet: View {
     let onAssign: (Int, UUID) async -> Void
     let onAddPerson: (Int, String) async -> Void
     let onUnassign: (Int) async -> Void
+    /// Opens the person editor for a speaker's assigned person.
+    let onEditPerson: (PersonData) -> Void
     let onDismiss: () -> Void
 
     /// Tracks which speaker's popover is currently open (nil = none).
@@ -99,6 +101,18 @@ struct SpeakerMappingSheet: View {
                 .frame(minWidth: 80, alignment: .leading)
 
             personPickerPill(for: row)
+
+            if let person = row.assigned {
+                Button {
+                    onEditPerson(person)
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.inkSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Edit \(person.name)\u{2026}")
+            }
 
             Spacer()
         }

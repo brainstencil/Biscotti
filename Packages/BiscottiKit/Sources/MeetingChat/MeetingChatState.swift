@@ -91,6 +91,12 @@ public final class MeetingChatState {
     public var isCardOpen = false
     /// The field's text, kept per meeting.
     public var draft = ""
+    /// Asks for the cursor in the question field the user sees next: the
+    /// card's while the card is open, otherwise the one in its place. That
+    /// field clears the request once it is shown, so a change that swaps one
+    /// field for the other can ask before the swap. It takes the cursor only
+    /// if chat is available then; a request made while it is not is dropped.
+    public var focusRequest = false
 
     private let availabilityOf: @MainActor (UUID) -> ChatAvailability
 

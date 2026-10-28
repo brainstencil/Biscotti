@@ -16,7 +16,7 @@ public final class MeetingChatService {
     /// The purpose of chat's leases on the broker.
     public static let leasePurpose = "chat"
     /// The longest question sent; the field stops at this length.
-    public static let maxQuestionLength = 2000
+    public nonisolated static let maxQuestionLength = 2000
 
     /// Turns the live transcript on, as the Settings toggle does. AppCore sets
     /// it; without it, `turnOnLiveTranscript()` turns it on for this run only.

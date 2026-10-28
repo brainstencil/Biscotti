@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Shared design tokens: colors, typography, and spacing for the F Sage identity.
@@ -252,6 +253,30 @@ public enum Tokens {
 
     /// Live transcript drawer radius: a floating panel, so softer than `cardRadius`.
     public static let drawerRadius: CGFloat = 16
+
+    // MARK: - Meeting chat
+
+    /// The question field's height on one line.
+    public static let chatFieldHeight: CGFloat = 40
+
+    /// The field's round Send / Stop button.
+    public static let chatRoundButton: CGFloat = 28
+
+    /// The space between one question-and-answer turn and the next.
+    public static let chatTurnSpacing: CGFloat = 26
+
+    /// The space between a question and its answer.
+    public static let chatAnswerSpacing: CGFloat = 16
+
+    /// The extra space between an answer's lines, for the UI design's 1.45
+    /// line height at 14 pt. SwiftUI's `lineSpacing` adds to the font's own
+    /// line height, so this is 14 × 1.45 less the system font's line height
+    /// at 14 pt (about 3.6 pt); the component doc's 14 × 0.45 would give a
+    /// 1.65 line height.
+    public static let chatLineSpacing: CGFloat = {
+        let font = NSFont.systemFont(ofSize: 14)
+        return max(0, 14 * 1.45 - (font.ascender - font.descender + font.leading))
+    }()
 
     // MARK: - Avatar
 

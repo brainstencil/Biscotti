@@ -348,12 +348,15 @@ private struct CenteredCaption: View {
 }
 
 /// Three 4 pt dots pulsing in turn over 0.9 s; still with Reduce Motion.
-struct TypingDots: View {
+/// Shared with the chat's answers while they stream.
+public struct TypingDots: View {
     static let cycle: TimeInterval = 0.9
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         if reduceMotion {
             dots(at: nil)
         } else {

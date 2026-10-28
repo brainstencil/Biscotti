@@ -57,19 +57,3 @@ private struct LanguageMenuButtonStyle: ButtonStyle {
         HoverHighlight(isPressed: configuration.isPressed) { configuration.label }
     }
 }
-
-/// A rounded `neutralChip` fill while hovered or pressed.
-struct HoverHighlight<Content: View>: View {
-    let isPressed: Bool
-    @ViewBuilder let content: Content
-    @State private var isHovered = false
-
-    var body: some View {
-        content
-            .background {
-                RoundedRectangle(cornerRadius: Tokens.buttonRadius, style: .continuous)
-                    .fill(isHovered || isPressed ? Tokens.neutralChip : Color.clear)
-            }
-            .onHover { isHovered = $0 }
-    }
-}

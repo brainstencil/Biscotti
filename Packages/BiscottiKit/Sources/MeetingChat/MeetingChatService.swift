@@ -28,6 +28,9 @@ public final class MeetingChatService {
     private(set) var answeringMeetingID: UUID?
     /// Whether each known meeting has a preferred transcript, from the store.
     private var transcriptFlags: [UUID: Bool] = [:]
+    /// Meetings whose recording stopped and whose final pass has not ended.
+    /// Until the pass is queued, no job says the transcript is on its way.
+    private var pendingFinalPasses: Set<UUID> = []
 
     // MARK: - Dependencies
 
@@ -102,16 +105,28 @@ public final class MeetingChatService {
         return state
     }
 
-    /// Re-reads whether the known meetings that had no transcript have one now.
-    /// AppCore calls it after a final pass. The rest of availability is worked
-    /// out on each read from observable state (`MeetingChatState.availability`),
-    /// so model, setting and recording changes need no call.
-    public func refreshAvailability() async {
-        // A transcript, once there, stays: re-transcribing replaces it.
-        let unknown = states.keys.filter { transcriptFlags[$0] != true }
-        for meetingID in unknown {
-            await refreshTranscriptFlag(meetingID)
-        }
+    /// A pass saved the meeting's preferred transcript. AppCore calls it from
+    /// the pass itself, in the same main-actor turn that marks the job
+    /// completed, so the field never reads "no transcript" in between. The
+    /// rest of availability is worked out on each read from observable state
+    /// (`MeetingChatState.availability`), so model, setting and recording
+    /// changes need no call.
+    public func transcriptWasSaved(meetingID: UUID) {
+        noteTranscript(meetingID, exists: true)
+    }
+
+    /// AppCore calls this the moment a recording stops. Until
+    /// `finalPassDidEnd(meetingID:)`, a meeting with no transcript and no
+    /// draft reads as transcribing: its pass is not queued yet, so no job
+    /// says so.
+    public func finalPassWillStart(meetingID: UUID) {
+        pendingFinalPasses.insert(meetingID)
+    }
+
+    /// AppCore calls this once the final pass after Stop has ended: saved,
+    /// failed or never run.
+    public func finalPassDidEnd(meetingID: UUID) {
+        pendingFinalPasses.remove(meetingID)
     }
 
     // MARK: - Asking
@@ -266,6 +281,7 @@ public final class MeetingChatService {
         }
         states[meetingID] = nil
         transcriptFlags[meetingID] = nil
+        pendingFinalPasses.remove(meetingID)
         threadLoadTokens[meetingID] = nil
     }
 
@@ -285,7 +301,7 @@ public final class MeetingChatService {
         if transcriptFlags[meetingID] == true || live.draft(for: meetingID) != nil {
             return .available
         }
-        return isTranscribing(meetingID) ? .transcribing : .noTranscript
+        return isTranscribing(meetingID) || pendingFinalPasses.contains(meetingID) ? .transcribing : .noTranscript
     }
 
     func refreshTranscriptFlag(_ meetingID: UUID) async {
@@ -296,9 +312,16 @@ public final class MeetingChatService {
             logger.error("Couldn't read the meeting: \(error.localizedDescription, privacy: .private)")
             return
         }
-        if transcriptFlags[meetingID] != hasTranscript {
-            transcriptFlags[meetingID] = hasTranscript
-        }
+        noteTranscript(meetingID, exists: hasTranscript)
+    }
+
+    /// Records whether a meeting has a preferred transcript. A transcript,
+    /// once there, stays (re-transcribing replaces it), so a reading taken
+    /// before a pass saved one never undoes `transcriptWasSaved`.
+    func noteTranscript(_ meetingID: UUID, exists: Bool) {
+        let flag = transcriptFlags[meetingID]
+        guard flag != true, flag != exists else { return }
+        transcriptFlags[meetingID] = exists
     }
 
     // MARK: - The answer slot

@@ -1,17 +1,20 @@
 import DesignSystem
+import MeetingChat
+import MeetingChatUI
 import SwiftUI
 
-/// The live transcript over the bottom of the recording screen: the toggle at
-/// the drawer's leading edge, and the drawer growing up from it, across most
-/// of the window. The toggle never moves; the open drawer's footer reserves
-/// its slot.
+/// The bottom of the recording screen, one slot (`RecordingBottomSlot`): the
+/// live transcript's toggle with the chat's question field beside it, the
+/// live transcript drawer growing up from the toggle, or the chat card in
+/// the drawer's place. The toggle never moves; the open drawer's footer
+/// reserves its slot, and the chat card's footer holds it.
 ///
 /// Chosen in UI review (25 October 2026): the drawer is wider than the notes
 /// column, so bubbles are wide and short, and opening it moves the notes up
 /// so the note field sits just above it, while the column's top, with Stop &
 /// Save, stays in view (see `openLayout`). In the second review the user
 /// added a height handle: the drawer's top edge drags to a height that is
-/// remembered across meetings.
+/// remembered across meetings. The chat card shares that height.
 struct LiveTranscriptOverlay: View {
     /// The notes column's width limit.
     static let columnMaxWidth: CGFloat = 600
@@ -26,6 +29,10 @@ struct LiveTranscriptOverlay: View {
     static let minimumDrawerHeight: CGFloat = 240
     /// How far one VoiceOver adjustment changes the height.
     static let heightStep: CGFloat = 40
+    /// The space between the toggle and the question field beside it.
+    static let rowFieldSpacing: CGFloat = 12
+    /// The narrowest the question field beside the toggle gets.
+    static let minimumRowFieldWidth: CGFloat = 200
 
     /// The open drawer's height and how far the notes scroll up for it.
     struct OpenLayout: Equatable {
@@ -38,37 +45,125 @@ struct LiveTranscriptOverlay: View {
     let drawerHeight: CGFloat
     /// The tallest the drawer may be dragged to.
     let maximumHeight: CGFloat
+    /// The notes column's trailing edge, from this overlay's leading edge:
+    /// the question field beside the toggle reaches it.
+    let notesColumnTrailing: CGFloat
     /// The height while the top edge is being dragged, nil otherwise.
     @Binding var dragHeight: CGFloat?
+    /// The toggle's row's height, measured: the notes scroll clear of it.
+    @Binding var rowHeight: CGFloat
+    /// The focus of the question field beside the toggle.
+    let rowFieldFocus: FocusState<Bool>.Binding
+    /// The focus of the card's question field.
+    let cardFieldFocus: FocusState<Bool>.Binding
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let isExpanded = viewModel.isDrawerExpanded
+        let slot = viewModel.bottomSlot
+        let chat = viewModel.chat
         ZStack(alignment: .bottomLeading) {
-            if isExpanded {
+            if let chat, Self.keepsChatCard(slot: slot, openedFromChat: viewModel.transcriptOpenedFromChat) {
+                chatCard(chat, isShown: slot == .chat)
+            }
+            if slot == .transcript {
                 LiveTranscriptDrawer(viewModel: viewModel)
                     .frame(height: drawerHeight)
-                    .overlay(alignment: .top) {
-                        DrawerResizeHandle(
-                            viewModel: viewModel,
-                            height: drawerHeight,
-                            maximumHeight: maximumHeight,
-                            dragHeight: $dragHeight
-                        )
-                    }
-                    .transition(drawerTransition)
+                    .overlay(alignment: .top) { resizeHandle(label: "Transcript height") }
+                    .transition(cardTransition)
             }
-            // Where the open drawer's footer holds it, collapsed or not.
-            LiveToggleButton(viewModel: viewModel)
-                .padding(.leading, LiveTranscriptDrawer.outset)
+            if slot != .chat {
+                bottomRow(chat, slot: slot)
+            }
         }
         .frame(width: drawerWidth, alignment: .bottomLeading)
         .padding(.bottom, Self.gutter)
-        .animation(Self.motion(reduceMotion: reduceMotion), value: isExpanded)
+        .animation(Self.motion(reduceMotion: reduceMotion), value: slot)
+    }
+
+    /// The toggle where the open drawer's footer holds it, and while the
+    /// drawer is closed, the question field beside it, centred on it.
+    private func bottomRow(_ chat: MeetingChatState?, slot: RecordingBottomSlot) -> some View {
+        let showsToggle = viewModel.showsLiveTranscript
+        return HStack(alignment: .bottom, spacing: Self.rowFieldSpacing) {
+            if showsToggle {
+                LiveToggleButton(viewModel: viewModel)
+            }
+            if slot == .collapsed, let chat {
+                ChatQuestionField(
+                    state: chat,
+                    service: viewModel.chatService,
+                    placement: .recordingRow,
+                    focus: rowFieldFocus,
+                    onAction: { viewModel.chatAction($0) }
+                )
+                .frame(width: Self.rowFieldWidth(notesColumnTrailing: notesColumnTrailing, showsToggle: showsToggle))
+                .padding(.bottom, (LiveToggleButton.size - Tokens.chatFieldHeight) / 2)
+            }
+        }
+        .padding(.leading, LiveTranscriptDrawer.outset)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
+    }
+
+    /// The chat card in the drawer's frame, with the bare toggle in its
+    /// footer. While the drawer shows after one of the card's times, the card
+    /// stays under it, hidden and inert, so "Back to chat" finds its list
+    /// scrolled where it was: the list keeps that in its own state.
+    private func chatCard(_ chat: MeetingChatState, isShown: Bool) -> some View {
+        ChatCard(
+            state: chat,
+            service: viewModel.chatService,
+            placement: .recordingCard,
+            focus: cardFieldFocus,
+            onTime: { viewModel.showTranscript(at: $0) },
+            onAction: { viewModel.chatAction($0) },
+            footerLeading: {
+                if viewModel.showsLiveTranscript {
+                    LiveToggleButton(viewModel: viewModel, isInCard: true)
+                }
+            }
+        )
+        .frame(height: drawerHeight)
+        .overlay(alignment: .top) {
+            if isShown {
+                resizeHandle(label: "Chat height")
+            }
+        }
+        .opacity(isShown ? 1 : 0)
+        .allowsHitTesting(isShown)
+        .disabled(!isShown)
+        .accessibilityHidden(!isShown)
+        .transition(cardTransition)
+    }
+
+    /// The drawer's and the chat card's shared height.
+    private func resizeHandle(label: String) -> some View {
+        TopEdgeResizeHandle(
+            label: label,
+            height: drawerHeight,
+            range: Self.minimumDrawerHeight ... max(Self.minimumDrawerHeight, maximumHeight),
+            step: Self.heightStep,
+            dragHeight: $dragHeight,
+            onSave: { viewModel.setLiveDrawerHeight($0) },
+            onReset: { viewModel.resetLiveDrawerHeight() }
+        )
+    }
+
+    /// The card shows in the chat slot, and stays, hidden, under a drawer
+    /// that one of its times opened.
+    static func keepsChatCard(slot: RecordingBottomSlot, openedFromChat: Bool) -> Bool {
+        slot == .chat || (slot == .transcript && openedFromChat)
+    }
+
+    /// The question field beside the toggle: from 12 pt right of the toggle
+    /// (or from the toggle's place, while there is none) to the notes
+    /// column's trailing edge, at least `minimumRowFieldWidth`.
+    static func rowFieldWidth(notesColumnTrailing: CGFloat, showsToggle: Bool) -> CGFloat {
+        let leading = LiveTranscriptDrawer.outset + (showsToggle ? LiveToggleButton.size + rowFieldSpacing : 0)
+        return max(minimumRowFieldWidth, notesColumnTrailing - leading)
     }
 
     /// Scales and fades from the toggle; a cross-fade with Reduce Motion.
-    private var drawerTransition: AnyTransition {
+    private var cardTransition: AnyTransition {
         reduceMotion ? .opacity : .scale(scale: 0.2, anchor: .bottomLeading).combined(with: .opacity)
     }
 
@@ -136,10 +231,14 @@ struct LiveTranscriptOverlay: View {
     }
 
     /// The notes' bottom scroll margin, so the last note can scroll clear of
-    /// the drawer or the toggle.
-    static func notesBottomInset(showsLive: Bool, isExpanded: Bool, drawerHeight: CGFloat) -> CGFloat {
-        guard showsLive else { return 0 }
-        return isExpanded ? drawerHeight + gutter : 60
+    /// the drawer, the chat card, or the toggle's row, which grows with the
+    /// question field beside it. Nil: nothing shows.
+    static func notesBottomInset(slot: RecordingBottomSlot?, drawerHeight: CGFloat, rowHeight: CGFloat) -> CGFloat {
+        switch slot {
+        case nil: 0
+        case .collapsed: max(LiveToggleButton.size, rowHeight) + gutter
+        case .chat, .transcript: drawerHeight + gutter
+        }
     }
 
     /// How far the notes scroll up while the drawer is open, so the note
@@ -151,86 +250,5 @@ struct LiveTranscriptOverlay: View {
     static func notesOffset(noteFieldBottom: CGFloat, viewportHeight: CGFloat, drawerHeight: CGFloat) -> CGFloat {
         let drawerTop = viewportHeight - gutter - drawerHeight
         return max(0, noteFieldBottom - (drawerTop - noteFieldGap))
-    }
-}
-
-// MARK: - Height handle
-
-/// The drawer's top edge: dragging it changes the height, double-clicking
-/// restores the default, and VoiceOver adjusts it in 40 pt steps. A small
-/// grabber shows while the pointer is over it.
-private struct DrawerResizeHandle: View {
-    static let hitHeight: CGFloat = 8
-
-    let viewModel: RecordingViewModel
-    let height: CGFloat
-    let maximumHeight: CGFloat
-    @Binding var dragHeight: CGFloat?
-    @State private var isHovering = false
-    @State private var startHeight: CGFloat?
-    /// Resets on its own when a drag ends or is cancelled, for example when
-    /// ⌘T hides the drawer mid-drag, which skips `onEnded`.
-    @GestureState private var isDragging = false
-
-    var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity)
-            .frame(height: Self.hitHeight)
-            .contentShape(Rectangle())
-            .overlay(alignment: .top) {
-                Capsule()
-                    .fill(Color.inkTertiary)
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 3)
-                    .opacity(isHovering || dragHeight != nil ? 1 : 0)
-                    .animation(.easeOut(duration: 0.12), value: isHovering)
-            }
-            .offset(y: -Self.hitHeight / 2)
-            .pointerStyle(.frameResize(position: .top))
-            .onHover { isHovering = $0 }
-            .gesture(drag)
-            .onChange(of: isDragging) { _, dragging in
-                guard !dragging else { return }
-                startHeight = nil
-                dragHeight = nil
-            }
-            .onTapGesture(count: 2) { viewModel.resetLiveDrawerHeight() }
-            .accessibilityElement()
-            .accessibilityLabel("Transcript height")
-            .accessibilityValue("\(Int(height.rounded())) points")
-            .accessibilityHint("Drag to resize. Double-click to restore the default height.")
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: save(height + LiveTranscriptOverlay.heightStep)
-                case .decrement: save(height - LiveTranscriptOverlay.heightStep)
-                @unknown default: break
-                }
-            }
-            .accessibilityAction(named: "Restore default height") { viewModel.resetLiveDrawerHeight() }
-    }
-
-    /// Dragging up makes the drawer taller.
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 1, coordinateSpace: .global)
-            .updating($isDragging) { _, dragging, _ in dragging = true }
-            .onChanged { value in
-                let start = startHeight ?? height
-                startHeight = start
-                dragHeight = clamp(start - value.translation.height)
-            }
-            .onEnded { value in
-                let start = startHeight ?? height
-                startHeight = nil
-                dragHeight = nil
-                save(start - value.translation.height)
-            }
-    }
-
-    private func clamp(_ value: CGFloat) -> CGFloat {
-        min(max(value, LiveTranscriptOverlay.minimumDrawerHeight), maximumHeight)
-    }
-
-    private func save(_ value: CGFloat) {
-        viewModel.setLiveDrawerHeight(clamp(value))
     }
 }

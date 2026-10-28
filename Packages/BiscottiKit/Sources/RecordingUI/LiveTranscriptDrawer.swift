@@ -97,6 +97,10 @@ private struct DrawerHeader: View {
                 .foregroundStyle(.inkSecondary)
                 .accessibilityAddTraits(.isHeader)
 
+            if viewModel.transcriptOpenedFromChat {
+                BackToChatButton { viewModel.backToChat() }
+            }
+
             if viewModel.isLiveCatchingUp {
                 HStack(spacing: Tokens.spacingXS) {
                     ProgressView().controlSize(.mini)
@@ -152,6 +156,32 @@ private struct DrawerHeader: View {
     }
 }
 
+/// "Back to chat", after the TRANSCRIPT label while a time in the chat
+/// opened the drawer: it reopens the chat card where it was.
+private struct BackToChatButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 9.5, weight: .semibold))
+                Text("Back to chat")
+                    .font(.system(size: 12.5, weight: .medium))
+            }
+            .foregroundStyle(.sage)
+            .padding(.horizontal, Tokens.spacingSM)
+            .frame(height: 22)
+            .background(Capsule().fill(Tokens.accentWashSoft))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .help("Back to chat")
+        .accessibilityLabel("Back to chat")
+    }
+}
+
 // MARK: - Body
 
 /// The bubbles, or a calm placeholder before there are any.
@@ -173,6 +203,7 @@ private struct DrawerTranscriptBody: View {
                     follow: .live,
                     find: find,
                     revealTime: $viewModel.revealTime,
+                    highlight: $viewModel.transcriptHighlight,
                     rowPadding: LiveTranscriptDrawer.sidePadding,
                     // The drawer is already at most 880 pt wide; bubbles use all of it.
                     maxRowWidth: .infinity,

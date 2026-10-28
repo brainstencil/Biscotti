@@ -61,7 +61,7 @@ struct MeetingChatFailureTests {
         #expect(chat.opener.closeCount == 0, "the loaded model stays for the next question")
     }
 
-    @Test("A meeting too long for the context fails the answer")
+    @Test("A meeting too long for the context fails the answer and keeps the model loaded")
     func tooLongFails() async throws {
         let chat = try ChatHarness()
         defer { chat.fix.cleanup() }
@@ -74,6 +74,14 @@ struct MeetingChatFailureTests {
         #expect(stored.errorMessage == "This meeting is too long to answer from.")
         #expect(stored.basis == nil)
         #expect(chat.opener.sessions.first?.streamingCalls.isEmpty == true)
+        #expect(chat.opener.closeCount == 0, "the lease ended without an error")
+
+        let questionID = try #require(chat.state(meetingID).messages.first?.id)
+        await chat.service.retry(questionID: questionID, meetingID: meetingID)
+        try await chat.waitForAnswer(in: meetingID)
+
+        #expect(try chat.lastAnswer(in: meetingID).state == .failed("This meeting is too long to answer from."))
+        #expect(chat.opener.openCount == 1, "Retry did not reload the model")
     }
 
     @Test("A recording with no live text yet fails without loading the model")

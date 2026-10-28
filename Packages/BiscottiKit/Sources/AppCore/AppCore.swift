@@ -602,6 +602,9 @@ public final class AppCore {
         }
 
         guard let meetingID = await recording.stop() else { return nil }
+        // In the turn the recording ends: until the pass is queued, chat
+        // reads a meeting with no draft as transcribing, not as transcript-less.
+        chat.finalPassWillStart(meetingID: meetingID)
         // Capture has stopped and closed the live tap. The draft is published
         // now, before the meeting opens; the live engine finishes its last
         // words in the background.
@@ -863,9 +866,10 @@ extension AppCore {
             // Releases the final-pass queue. If another recording has started
             // meanwhile, the stop is ignored and this pass waits in the queue.
             transcription.recordingDidStop(meetingID)
+            // A saved transcript reaches chat from inside the pass
+            // (`onTranscriptSaved`), before the draft it used goes below.
             await transcription.transcribe(meetingID: meetingID)
-            // Chat learns of the saved transcript before the draft it used goes.
-            await chat.refreshAvailability()
+            chat.finalPassDidEnd(meetingID: meetingID)
             // A failed pass keeps the draft, so the live text stays readable.
             if transcription.jobs[meetingID] == .completed {
                 liveTranscription.releaseDraft(for: meetingID)

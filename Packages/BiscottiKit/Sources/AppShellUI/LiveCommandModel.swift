@@ -1,5 +1,6 @@
 import AppCore
 import LiveTranscriptionService
+import MeetingChat
 import Observation
 
 /// View > Show / Hide Live Transcript (⌘T). The app delegate owns one and
@@ -35,15 +36,23 @@ public final class LiveCommandModel {
     }
 
     /// On the recording screen, shows or hides the drawer. On another screen,
-    /// brings the recording screen forward with the drawer shown.
+    /// brings the recording screen forward with the drawer shown. Showing the
+    /// drawer closes the recording's chat card, which shares its place.
     public func toggle() {
         guard let core, isEnabled else { return }
         if core.route == .recording {
+            if !core.liveTranscription.isDrawerExpanded { closeChatCard(core) }
             core.liveTranscription.toggleDrawer()
         } else {
             showMainWindow?()
             core.navigateToRecording()
+            closeChatCard(core)
             core.liveTranscription.isDrawerExpanded = true
         }
+    }
+
+    private func closeChatCard(_ core: AppCore) {
+        guard let meetingID = core.recording.recordingMeetingID else { return }
+        core.chat.state(for: meetingID).isCardOpen = false
     }
 }

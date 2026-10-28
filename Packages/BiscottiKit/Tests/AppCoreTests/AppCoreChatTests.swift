@@ -6,6 +6,7 @@ import LiveTranscriptionService
 import LiveTranscriptModel
 import MeetingChat
 import Testing
+import TranscriptionService
 @testable import AppCore
 
 private let gib: UInt64 = 1 << 30
@@ -68,19 +69,43 @@ struct AppCoreChatTests {
         await fix.core.awaitPendingTranscription()
     }
 
-    @Test("A transcript saved by any final pass, not only the one after Stop, makes chat available")
+    @Test("A transcript saved by any final pass, not only the one after Stop, makes chat available as the job completes")
     func savedTranscriptRefreshesChat() async throws {
         let fix = try makeCoreFixture(modelDownloaded: true, testName: "AppCoreChatTests")
         defer { fix.cleanup() }
         let meetingID = try await fix.createMeetingWithAudio()
         await fix.chat.load(meetingID: meetingID)
         #expect(fix.chat.state(for: meetingID).availability == .noTranscript)
+        // What chat reads in the turn that completes the job, after AppCore's hook.
+        let seen = AvailabilitySeen()
+        let hook = fix.core.transcription.onTranscriptSaved
+        fix.core.transcription.onTranscriptSaved = { id in
+            hook?(id)
+            seen.job = fix.core.transcription.jobs[id]
+            seen.availability = fix.chat.state(for: id).availability
+        }
 
         // As the meeting page's transcription Retry does.
         await fix.core.transcription.transcribe(meetingID: meetingID)
 
-        #expect(fix.core.transcription.jobs[meetingID] == .completed)
-        try await waitUntil("chat to see the transcript") { fix.chat.state(for: meetingID).availability == .available }
+        #expect(seen.job == .completed)
+        #expect(seen.availability == .available, "no \"no transcript\" in between")
+    }
+
+    @Test("Right after Stop with the live transcript off, chat reads as transcribing, not as transcript-less")
+    func stopWithLiveOffReadsTranscribing() async throws {
+        let live = makeFakeLiveService(isEnabled: false)
+        let fix = try makeCoreFixture(modelDownloaded: true, liveTranscription: live, testName: "AppCoreChatTests")
+        defer { fix.cleanup() }
+        await fix.core.startRecording()
+        let meetingID = try #require(fix.core.recording.recordingMeetingID)
+
+        _ = await fix.core.stopRecording()
+
+        #expect(fix.core.transcription.jobs[meetingID] == nil, "the pass is not queued yet")
+        #expect(fix.chat.state(for: meetingID).availability == .transcribing)
+        await fix.core.awaitPendingTranscription()
+        #expect(fix.chat.state(for: meetingID).availability != .transcribing)
     }
 
     @Test("Deleting a meeting stops its answer and frees chat for the other meetings")
@@ -117,4 +142,11 @@ struct AppCoreChatTests {
         #expect(live.isEnabled)
         #expect(try await fix.store.settings().liveTranscriptEnabled == true)
     }
+}
+
+/// What chat read when a pass saved a transcript.
+@MainActor
+private final class AvailabilitySeen {
+    var job: JobStatus?
+    var availability: ChatAvailability?
 }

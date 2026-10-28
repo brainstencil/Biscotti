@@ -1,6 +1,7 @@
 import Foundation
 import LiveTranscriptionService
 import LiveTranscriptModel
+import MeetingChat
 import Recording
 import TranscriptUI
 
@@ -181,12 +182,18 @@ public extension RecordingViewModel {
 
     // MARK: Actions
 
+    /// Opening the drawer closes the chat card: the bottom is one slot.
     func toggleDrawer() {
+        if !live.isDrawerExpanded {
+            chat?.isCardOpen = false
+        }
+        transcriptOpenedFromChat = false
         live.toggleDrawer()
     }
 
     func collapseDrawer() {
         live.isDrawerExpanded = false
+        transcriptOpenedFromChat = false
     }
 
     func setLanguage(_ language: LiveLanguage) async {
@@ -203,6 +210,8 @@ public extension RecordingViewModel {
     /// from capture start; the transcript's from the first mic buffer.
     func revealNoteInTranscript(_ note: MeetingNote) {
         let offset = core.recording.state.timelineOffset ?? 0
+        chat?.isCardOpen = false
+        transcriptOpenedFromChat = false
         live.reveal(atRecordingTime: note.timestamp + offset)
     }
 

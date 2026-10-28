@@ -53,6 +53,15 @@ enum AnswerOutcome {
     case failed(any Error)
 }
 
+/// How the lease's body ended. A prompt that does not fit comes back as a
+/// value, not an error: the broker closes the connection after a body that
+/// throws, and a Retry would then reload the model only to fail again.
+enum LeaseAnswer {
+    /// The stream was read to its end.
+    case read(sawDone: Bool)
+    case promptFailed(ChatPromptError)
+}
+
 /// The meeting has no transcript text to answer from.
 struct NoChatTranscript: Error {}
 
@@ -84,7 +93,7 @@ extension MeetingChatService {
             let onWait: @Sendable (LLMWait) -> Void = { [weak self] wait in
                 Task { @MainActor in self?.apply(wait, to: run) }
             }
-            let sawDone = try await broker.withLease(
+            let leaseAnswer = try await broker.withLease(
                 model: model,
                 priority: .interactive,
                 purpose: Self.leasePurpose,
@@ -94,7 +103,10 @@ extension MeetingChatService {
                 guard let self else { throw CancellationError() }
                 return try await answer(run, record: record, in: session)
             }
-            return .finished(sawDone: sawDone)
+            return switch leaseAnswer {
+            case let .read(sawDone): .finished(sawDone: sawDone)
+            case let .promptFailed(error): .failed(error)
+            }
         } catch {
             return .failed(error)
         }
@@ -137,8 +149,8 @@ extension MeetingChatService {
     }
 
     /// Runs inside the lease: builds the prompt, sizes the context and reads
-    /// the answer. Returns whether the stream said it was finished.
-    private func answer(_ run: AnswerRun, record: ChatMeetingRecord, in session: any LLMSession) async throws -> Bool {
+    /// the answer.
+    private func answer(_ run: AnswerRun, record: ChatMeetingRecord, in session: any LLMSession) async throws -> LeaseAnswer {
         // A Stop during the model load ends the answer before a prompt exists.
         try Task.checkCancellation()
         run.leaseStarted = true
@@ -146,12 +158,17 @@ extension MeetingChatService {
         run.view.state = .streaming(.thinking)
         publish(run)
 
-        let prompt = try await ChatPromptBuilder.build(
-            record: record,
-            earlierTurns: run.earlierTurns,
-            question: run.question,
-            count: { try await session.countTokens(messages: $0) }
-        )
+        let prompt: ChatPrompt
+        do {
+            prompt = try await ChatPromptBuilder.build(
+                record: record,
+                earlierTurns: run.earlierTurns,
+                question: run.question,
+                count: { try await session.countTokens(messages: $0) }
+            )
+        } catch let error as ChatPromptError {
+            return .promptFailed(error)
+        }
         run.prompt = prompt
         logger.info("Prompt: \(prompt.promptTokens) tokens, context \(prompt.contextSize), partial \(prompt.isPartial)")
         try Task.checkCancellation()
@@ -160,7 +177,7 @@ extension MeetingChatService {
         // Not pulled yet, so a cancellation before `read` leaves the connection free.
         let stream = await session.generateStreaming(messages: prompt.messages, options: prompt.options)
         try Task.checkCancellation()
-        return try await read(stream, for: run)
+        return try await .read(sawDone: read(stream, for: run))
     }
 
     /// Reads the stream to its end, as the broker requires.

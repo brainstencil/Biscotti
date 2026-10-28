@@ -53,8 +53,10 @@ extension AppCore {
         chat.onTurnOnLiveTranscript = { [weak self] in
             await self?.turnOnLiveTranscriptForChat()
         }
-        transcription.onTranscriptSaved = { [weak self] _ in
-            Task { await self?.chat.refreshAvailability() }
+        // In the turn that marks the job completed, so chat never reads
+        // "no transcript" in between.
+        transcription.onTranscriptSaved = { [weak self] meetingID in
+            self?.chat.transcriptWasSaved(meetingID: meetingID)
         }
     }
 

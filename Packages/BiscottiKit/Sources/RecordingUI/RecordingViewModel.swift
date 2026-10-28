@@ -41,6 +41,13 @@ public final class RecordingViewModel {
     /// The live drawer's items and the live state they were built from.
     @ObservationIgnored var liveItemsCache: LiveItemsCache?
 
+    /// The drawer was opened by a time in the chat card: its header shows
+    /// "Back to chat". Cleared when the drawer closes or the chat opens.
+    public internal(set) var transcriptOpenedFromChat = false
+
+    /// The bubble a chat time cited, highlighted in the drawer for 2 s.
+    public var transcriptHighlight: TranscriptHighlight?
+
     /// The meeting detail loaded from the store.
     public private(set) var detail: MeetingDetailData?
 

@@ -111,6 +111,7 @@ struct BiscottiApp: App {
             }
 
             LiveTranscriptCommands(model: appDelegate.liveCommandModel)
+            MeetingChatCommands(model: appDelegate.chatCommandModel)
         }
 
         // Menu bar extra (native menu style)
@@ -279,6 +280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate,
     /// View > Show / Hide Live Transcript; gets the core in `buildCore()`.
     let liveCommandModel = LiveCommandModel()
 
+    /// View > Ask About This Meeting; gets the core in `buildCore()`.
+    let chatCommandModel = ChatCommandModel()
+
     /// A URL that arrived via `application(_:open:)` before the core
     /// finished launching. Only the most recent one is kept (last wins).
     private var pendingLaunchURL: URL?
@@ -429,6 +433,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate,
             notificationService = appCore.notifications
             liveCommandModel.core = appCore
             liveCommandModel.showMainWindow = { [weak self] in self?.showMainWindow() }
+            chatCommandModel.core = appCore
+            chatCommandModel.showMainWindow = { [weak self] in self?.showMainWindow() }
 
             launchState.shellViewModel = AppShellViewModel(core: appCore)
             launchState.shellViewModel?.onLaunchCompletion = { [weak self] in

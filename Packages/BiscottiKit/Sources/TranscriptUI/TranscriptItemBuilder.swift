@@ -12,6 +12,7 @@ public enum TranscriptItemBuilder {
     /// A stretch whose audio may have held sound for less time than this
     /// shows no marker: the saved transcript covers it, and a marker for
     /// every short stall alarms more than it informs.
+    /// Mirrored in `MeetingChat/ChatEvidence.swift` (`mergedGaps`, `GapStretch`); change both.
     public static let minimumGapMarker: TimeInterval = 5
     /// Gaps this close together form one stretch.
     static let gapJoinTolerance: TimeInterval = 0.05
@@ -183,6 +184,7 @@ public enum TranscriptItemBuilder {
 
 /// Touching gaps, and how much of them may have held sound: the union of the
 /// gaps not known to be silent. Gaps join in start-time order.
+/// Mirrored in `MeetingChat/ChatEvidence.swift` (`mergedGaps`, `GapStretch`); change both.
 private struct GapStretch {
     let start: TimeInterval
     var end: TimeInterval

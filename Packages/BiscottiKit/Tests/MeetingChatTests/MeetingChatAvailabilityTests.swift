@@ -65,7 +65,7 @@ struct MeetingChatAvailabilityTests {
         #expect(chat.state(meetingID).availability == .noTranscript)
     }
 
-    @Test("A saved transcript makes chat available, also once it arrives after loading")
+    @Test("A saved transcript makes chat available, also once it arrives after loading, with nothing to await")
     func availableWithSavedTranscript() async throws {
         let chat = try ChatHarness()
         defer { chat.fix.cleanup() }
@@ -79,9 +79,42 @@ struct MeetingChatAvailabilityTests {
         let transcriptID = try await chat.fix.store.addTranscript(result, vocabularyUsed: [], mappedEventIdentifier: nil, to: meetingID)
         try await chat.fix.store.setPreferredTranscript(transcriptID, for: meetingID)
 
-        await chat.service.refreshAvailability()
+        chat.service.transcriptWasSaved(meetingID: meetingID)
 
         #expect(chat.state(meetingID).availability == .available)
+    }
+
+    @Test("A page that read the meeting passes whether it has a transcript; a stale reading never undoes a saved one")
+    func loadTakesTheTranscriptFlag() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+
+        await chat.service.load(meetingID: meetingID, hasTranscript: true)
+        #expect(chat.state(meetingID).availability == .available, "taken as given, not read from the store")
+
+        let otherID = try await chat.meeting()
+        await chat.service.load(meetingID: otherID, hasTranscript: false)
+        #expect(chat.state(otherID).availability == .noTranscript)
+        chat.service.transcriptWasSaved(meetingID: otherID)
+        // A page that read the meeting just before the pass saved its transcript.
+        await chat.service.load(meetingID: otherID, hasTranscript: false)
+        #expect(chat.state(otherID).availability == .available)
+    }
+
+    @Test("From Stop until the final pass ends, a meeting with no draft reads as transcribing")
+    func pendingFinalPassReadsTranscribing() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        await chat.service.load(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .noTranscript)
+
+        chat.service.finalPassWillStart(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .transcribing, "no job is queued yet")
+
+        chat.service.finalPassDidEnd(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .noTranscript, "the pass saved nothing")
     }
 
     @Test("A stopped recording's draft is enough to ask")

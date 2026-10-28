@@ -5,6 +5,8 @@ import DesignSystem
 import ImportExport
 import Intelligence
 import MarkdownEditorUI
+import MeetingChat
+import MeetingChatUI
 import SummaryPromptUI
 import SwiftUI
 import TranscriptionService
@@ -26,8 +28,9 @@ import TranscriptUI
 ///    states (processing / failed / waiting / empty / not-transcribed). A single
 ///    outer `ScrollView` wraps chrome + tab content as before.
 ///
-/// The audio transport bar is pinned to the bottom of the panel via
-/// `safeAreaInset` in both paths.
+/// The chat's field band and the audio transport bar are pinned to the
+/// bottom of the panel via `safeAreaInset` in both paths. The chat card
+/// rises over the page from the band.
 public struct MeetingDetailView: View {
     @Bindable private var viewModel: MeetingDetailViewModel
 
@@ -37,10 +40,31 @@ public struct MeetingDetailView: View {
     /// Measured height of the pinned transport bar at the bottom.
     @State private var transportHeight: CGFloat = 0
 
-    /// Bottom breathing room between scroll content and the pinned
-    /// transport bar. Applied via `safeAreaInset(spacing:)` in both
-    /// layout paths so every tab gets the same bottom space.
-    private static let transportSpacing: CGFloat = Tokens.spacingMD + Tokens.spacingXS
+    /// Measured height of everything pinned at the bottom: the fade, the
+    /// chat's field band and the transport bar.
+    @State private var pinnedBottomHeight: CGFloat = 0
+
+    /// The chat's question field in the band, and the one in the card. Each
+    /// has its own, so the cursor's move between them is defined; the move
+    /// itself goes through `MeetingChatState.focusRequest`.
+    @FocusState private var isBandFieldFocused: Bool
+    @FocusState private var isCardFieldFocused: Bool
+
+    /// The height the user dragged the chat card to, remembered across
+    /// meetings; 0 for the default.
+    @AppStorage(MeetingChatCardLayout.heightKey) private var storedCardHeight: Double = 0
+
+    /// The card's height while its top edge is dragged.
+    @State private var cardDragHeight: CGFloat?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The page's content fades into the chat's band over this height, so
+    /// nothing is cut off mid-line.
+    private static let chatFadeHeight: CGFloat = 24
+
+    /// The space between the chat's field and the transport bar.
+    private static let chatBandBottomPadding: CGFloat = 10
 
     /// Transient "Copied" feedback: true for ~1.5s after a copy action.
     @State private var didCopy = false
@@ -73,6 +97,12 @@ public struct MeetingDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 loadedContent(geo: geo)
+                    .overlay(alignment: .bottom) {
+                        if viewModel.chat.isCardOpen {
+                            chatCard(pageHeight: geo.size.height)
+                        }
+                    }
+                    .animation(reduceMotion ? nil : .spring(duration: 0.25), value: viewModel.chat.isCardOpen)
             }
         }
         .background(Tokens.contentBackground)
@@ -115,9 +145,12 @@ public struct MeetingDetailView: View {
         .onChange(of: viewModel.liveDraft) { _, _ in
             viewModel.syncDraft()
         }
+        // A drag that closing the card cut short leaves no height behind.
+        .onChange(of: viewModel.chat.isCardOpen) { cardDragHeight = nil }
         .onDisappear {
             copyResetTask?.cancel()
             copyResetTask = nil
+            viewModel.pageDidDisappear()
             Task { await viewModel.flushPendingEdits() }
         }
     }
@@ -139,8 +172,10 @@ public struct MeetingDetailView: View {
     ///    transcribed). The outer `ScrollView` wraps chrome + tab
     ///    content as before.
     ///
-    /// The `AudioTransport` is pinned to the bottom of the panel via
-    /// `safeAreaInset(edge: .bottom)` in both paths.
+    /// The chat's band and the `AudioTransport` are pinned to the bottom of
+    /// the panel via `safeAreaInset(edge: .bottom)` in both paths
+    /// (`pinnedBottom`), so content scrolls behind the band and never under
+    /// the field.
     @ViewBuilder
     private func loadedContent(geo: GeometryProxy) -> some View {
         if useTranscriptListLayout {
@@ -165,19 +200,6 @@ public struct MeetingDetailView: View {
         }
     }
 
-    // MARK: - Transcript list layout (single List scroll)
-
-    /// The `List` is the sole scroll container, spanning the full pane
-    /// width so the scrollbar sits flush at the right window edge. Row
-    /// content is constrained to the page max width inside each row via
-    /// `listRowMaxWidth`, matching the ScrollView path's layout.
-    private func transcriptListLayout(geo _: GeometryProxy) -> some View {
-        transcriptReadyContent
-            .safeAreaInset(edge: .bottom, spacing: Self.transportSpacing) {
-                pinnedTransportBar
-            }
-    }
-
     // MARK: - ScrollView layout (Notes + non-ready transcript states)
 
     /// The original outer `ScrollView` layout used by the Notes tab and
@@ -199,13 +221,14 @@ public struct MeetingDetailView: View {
             .frame(maxWidth: Tokens.readableContentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .safeAreaInset(edge: .bottom, spacing: Self.transportSpacing) {
-            pinnedTransportBar
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            pinnedBottom
         }
     }
 
     /// Height available for tab content after subtracting chrome, padding,
-    /// and the pinned transport bar. Used by the `scrollViewLayout` path.
+    /// and the pinned bottom (the chat's band and the transport bar). Used
+    /// by the `scrollViewLayout` path.
     ///
     /// The caller applies a 250pt floor via `max(250, contentFill(...))` so
     /// the notes editor stays usable in small windows. In normal/large
@@ -215,17 +238,15 @@ public struct MeetingDetailView: View {
     /// **Layout coupling:** the `verticalOverhead` constant mirrors the
     /// padding and divider in `scrollViewLayout(geo:)`. If you change
     /// the padding values or divider there, update this calculation to
-    /// match. The `transportHeight` is measured via `onGeometryChange`
-    /// in `pinnedTransportBar` -- it accounts for the bottom
-    /// `safeAreaInset` that the outer `GeometryReader` does not subtract
-    /// from its reported size.
+    /// match. The `pinnedBottomHeight` is measured via `onGeometryChange`
+    /// in `pinnedBottom` -- it accounts for the bottom `safeAreaInset` that
+    /// the outer `GeometryReader` does not subtract from its reported size.
     private func contentFill(viewportHeight: CGFloat) -> CGFloat {
         let verticalOverhead =
             Tokens.homeVerticalPadding * 2 // top + bottom page padding
             + Tokens.spacingMD * 2 // divider vertical padding
             + 1 // divider pixel height
-            + Self.transportSpacing // gap between content and transport bar
-        return max(0, viewportHeight - chromeHeight - transportHeight - verticalOverhead)
+        return max(0, viewportHeight - chromeHeight - pinnedBottomHeight - verticalOverhead)
     }
 }
 
@@ -793,6 +814,160 @@ private extension MeetingDetailView {
     }
 }
 
+// MARK: - Transcript list layout
+
+/// In an extension to keep the struct's body within the type_body_length limit.
+private extension MeetingDetailView {
+    /// The `List` is the sole scroll container, spanning the full pane
+    /// width so the scrollbar sits flush at the right window edge. Row
+    /// content is constrained to the page max width inside each row via
+    /// `listRowMaxWidth`, matching the ScrollView path's layout.
+    ///
+    /// While the chat card is open, the list's safe area also covers the
+    /// card, so any bubble, the last one too, can scroll into the area above
+    /// it, and a chip's reveal or a scroll to a find match places the bubble
+    /// there. It goes inside the pinned bottom's inset, which stays at the
+    /// page's bottom edge.
+    func transcriptListLayout(geo: GeometryProxy) -> some View {
+        let cardMargin = viewModel.chat.isCardOpen
+            ? MeetingChatCardLayout.listBottomMargin(
+                cardHeight: chatCardHeight(pageHeight: geo.size.height),
+                pinnedBottomHeight: pinnedBottomHeight,
+                transportHeight: transportHeight
+            )
+            : 0
+        return transcriptReadyContent
+            .safeAreaPadding(.bottom, cardMargin)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                pinnedBottom
+            }
+    }
+}
+
+// MARK: - Chat
+
+private extension MeetingDetailView {
+    /// Pinned under both layout paths: the fade, the chat's field band and
+    /// the transport bar.
+    var pinnedBottom: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Tokens.contentBackground.opacity(0), Tokens.contentBackground],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: Self.chatFadeHeight)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+
+            chatBand
+            pinnedTransportBar
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+            pinnedBottomHeight = $0
+        }
+    }
+
+    /// The question field, as wide as the content column, on `paper`. While
+    /// the card is open, the band shows no field: the card's own field takes
+    /// over, and the band keeps a one-line field's height so the page does
+    /// not move.
+    var chatBand: some View {
+        Group {
+            if viewModel.chat.isCardOpen {
+                Color.clear.frame(height: Tokens.chatFieldHeight)
+            } else {
+                ChatQuestionField(
+                    state: viewModel.chat,
+                    service: viewModel.chatService,
+                    placement: .meetingPage,
+                    focus: $isBandFieldFocused,
+                    onAction: { viewModel.chatAction($0) }
+                )
+            }
+        }
+        .padding(.horizontal, Tokens.homeHorizontalPadding)
+        .padding(.bottom, Self.chatBandBottomPadding)
+        .frame(maxWidth: Tokens.readableContentMaxWidth)
+        .frame(maxWidth: .infinity)
+        .background(Tokens.contentBackground)
+    }
+
+    /// The chat card, rising from the band: the field's width, its bottom
+    /// 7 pt above the transport bar, and a draggable top edge. Its height is
+    /// remembered across meetings.
+    func chatCard(pageHeight: CGFloat) -> some View {
+        let range = MeetingChatCardLayout.minimumHeight
+            ... MeetingChatCardLayout.maximumHeight(pageHeight: pageHeight, transportHeight: transportHeight)
+        let height = chatCardHeight(pageHeight: pageHeight)
+        return ChatCard(
+            state: viewModel.chat,
+            service: viewModel.chatService,
+            placement: .meetingCard,
+            focus: $isCardFieldFocused,
+            onTime: { viewModel.showTranscript(at: $0) },
+            onAction: { viewModel.chatAction($0) }
+        )
+        .frame(height: height)
+        .overlay(alignment: .top) {
+            TopEdgeResizeHandle(
+                label: "Chat height",
+                height: height,
+                range: range,
+                dragHeight: $cardDragHeight,
+                onSave: { storedCardHeight = Double($0.rounded()) },
+                onReset: { storedCardHeight = 0 }
+            )
+        }
+        .padding(.horizontal, Tokens.homeHorizontalPadding)
+        .frame(maxWidth: Tokens.readableContentMaxWidth)
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, transportHeight + MeetingChatCardLayout.gapAboveTransport)
+        .transition(reduceMotion ? .opacity : .offset(y: 24).combined(with: .opacity))
+    }
+
+    /// The height being dragged to, else the remembered one, else the default.
+    func chatCardHeight(pageHeight: CGFloat) -> CGFloat {
+        cardDragHeight ?? MeetingChatCardLayout.height(
+            stored: storedCardHeight > 0 ? CGFloat(storedCardHeight) : nil,
+            pageHeight: pageHeight,
+            transportHeight: transportHeight
+        )
+    }
+}
+
+/// Where the chat card sits on the meeting page: rising from the field band,
+/// its bottom 7 pt above the playback bar.
+enum MeetingChatCardLayout {
+    static let minimumHeight: CGFloat = 200
+    /// The first height, as a share of the page.
+    static let defaultFraction: CGFloat = 0.6
+    static let gapAboveTransport: CGFloat = 7
+    /// The UserDefaults key of the height the user dragged the card to,
+    /// remembered across meetings.
+    static let heightKey = "meetingChat.cardHeight"
+
+    /// The page above the card's bottom edge, never less than the minimum.
+    static func maximumHeight(pageHeight: CGFloat, transportHeight: CGFloat) -> CGFloat {
+        max(minimumHeight, pageHeight - transportHeight - gapAboveTransport)
+    }
+
+    /// The stored height, or 60% of the page, between 200 pt and the page
+    /// above the card's bottom edge.
+    static func height(stored: CGFloat?, pageHeight: CGFloat, transportHeight: CGFloat) -> CGFloat {
+        let wanted = stored ?? pageHeight * defaultFraction
+        return min(max(wanted, minimumHeight), maximumHeight(pageHeight: pageHeight, transportHeight: transportHeight))
+    }
+
+    /// The transcript list's extra bottom margin while the card is open: the
+    /// card and its gap, less the fade and the band the list already ends
+    /// above. The last bubble can then scroll up to the card's top edge.
+    static func listBottomMargin(cardHeight: CGFloat, pinnedBottomHeight: CGFloat, transportHeight: CGFloat) -> CGFloat {
+        let fadeAndBand = max(0, pinnedBottomHeight - transportHeight)
+        return max(0, cardHeight + gapAboveTransport - fadeAndBand)
+    }
+}
+
 // MARK: - Tab content
 
 private extension MeetingDetailView {
@@ -1107,6 +1282,7 @@ private extension MeetingDetailView {
             follow: .never,
             revealTime: $viewModel.transcriptRevealTime,
             anchorTime: $viewModel.draftAnchorTime,
+            highlight: $viewModel.transcriptHighlight,
             onSeek: { viewModel.seekAndPlay(to: $0) },
             onSpeaker: { speakerID in
                 Task {

@@ -30,6 +30,17 @@ public struct RecordingView: View {
     /// The top of the column's first row (the status row, or the auto-stop
     /// card above it) in the scroll content, unscrolled.
     @State private var headerTop: CGFloat = 0
+    /// The notes column's trailing edge, inside its padding: the chat's
+    /// question field beside the toggle reaches it.
+    @State private var notesColumnTrailing: CGFloat = 0
+    /// The chat's question field beside the toggle, and the one in the card.
+    /// Each has its own, so the cursor's move between them is defined; the
+    /// move itself goes through `MeetingChatState.focusRequest`.
+    @FocusState private var isRowFieldFocused: Bool
+    @FocusState private var isCardFieldFocused: Bool
+    /// The toggle's row, taller while the question field beside it holds
+    /// more than one line.
+    @State private var bottomRowHeight: CGFloat = LiveToggleButton.size
     /// The status row's bottom edge there: a dragged drawer stops below it.
     @State private var statusRowBottom: CGFloat = 0
     /// The drawer's height while its top edge is dragged.
@@ -40,6 +51,8 @@ public struct RecordingView: View {
     nonisolated static let contentSpace = "recordingContent"
     /// The space above and below the column's rows.
     nonisolated static let columnVerticalPadding: CGFloat = 40
+    /// The space beside the column's rows.
+    static let columnHorizontalPadding: CGFloat = Tokens.spacingXL
 
     public init(viewModel: RecordingViewModel) {
         self.viewModel = viewModel
@@ -170,7 +183,7 @@ public struct RecordingView: View {
             }
         }
         .padding(.vertical, Self.columnVerticalPadding)
-        .padding(.horizontal, Tokens.spacingXL)
+        .padding(.horizontal, Self.columnHorizontalPadding)
         .frame(maxWidth: LiveTranscriptOverlay.columnMaxWidth)
     }
 
@@ -293,7 +306,9 @@ private struct NotesScrollKey: Equatable {
 private extension RecordingView {
     var recordingContent: some View {
         GeometryReader { geometry in
-            let showsLive = viewModel.showsLiveTranscript
+            // A recording always has a chat; the toggle shows while live transcription runs.
+            let showsBottom = viewModel.chat != nil || viewModel.showsLiveTranscript
+            let slot = viewModel.bottomSlot
             let firstRowsHeight = max(0, statusRowBottom - headerTop)
             let open = LiveTranscriptOverlay.openLayout(
                 viewportHeight: geometry.size.height,
@@ -303,17 +318,20 @@ private extension RecordingView {
                 preferredHeight: drawerDragHeight ?? viewModel.liveDrawerHeight
             )
             let drawerHeight = open.drawerHeight
-            let isOpen = showsLive && viewModel.isDrawerExpanded
+            let drawerWidth = LiveTranscriptOverlay.drawerWidth(forAvailableWidth: geometry.size.width)
+            // The chat card takes the open drawer's place and height.
+            let isOpen = showsBottom && slot != .collapsed
             let notesScrollKey = NotesScrollKey(offset: isOpen ? open.notesOffset : 0, isDrawerOpen: isOpen)
             ScrollView {
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
 
                     mainColumn
-                        .onGeometryChange(for: CGFloat.self) { proxy in
-                            proxy.frame(in: .named(Self.contentSpace)).minY + Self.columnVerticalPadding
-                        } action: { top in
-                            headerTop = top
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .named(Self.contentSpace))
+                        } action: { frame in
+                            headerTop = frame.minY + Self.columnVerticalPadding
+                            notesColumnTrailing = frame.maxX - Self.columnHorizontalPadding
                         }
 
                     Spacer(minLength: 0)
@@ -326,34 +344,43 @@ private extension RecordingView {
                 .coordinateSpace(.named(Self.contentSpace))
             }
             .scrollPosition($notesScroll)
-            // The margin lets the notes scroll clear of the drawer. While it
-            // is open, the notes move up so the note field sits just above
-            // it, as far as the column's top, with Stop & Save, stays in view.
+            // The margin lets the notes scroll clear of the drawer or the
+            // chat card. While one is open, the notes move up so the note
+            // field sits just above it, as far as the column's top, with
+            // Stop & Save, stays in view.
             .contentMargins(
                 .bottom,
                 LiveTranscriptOverlay.notesBottomInset(
-                    showsLive: showsLive,
-                    isExpanded: viewModel.isDrawerExpanded,
-                    drawerHeight: drawerHeight
+                    slot: showsBottom ? slot : nil,
+                    drawerHeight: drawerHeight,
+                    rowHeight: bottomRowHeight
                 ),
                 for: .scrollContent
             )
             .overlay(alignment: .bottom) {
-                if showsLive {
+                if showsBottom {
                     LiveTranscriptOverlay(
                         viewModel: viewModel,
-                        drawerWidth: LiveTranscriptOverlay.drawerWidth(forAvailableWidth: geometry.size.width),
+                        drawerWidth: drawerWidth,
                         drawerHeight: drawerHeight,
                         maximumHeight: LiveTranscriptOverlay.maximumDrawerHeight(
                             viewportHeight: geometry.size.height,
                             firstRowsHeight: firstRowsHeight
                         ),
-                        dragHeight: $drawerDragHeight
+                        // The overlay is centred, `drawerWidth` wide.
+                        notesColumnTrailing: notesColumnTrailing - (geometry.size.width - drawerWidth) / 2,
+                        dragHeight: $drawerDragHeight,
+                        rowHeight: $bottomRowHeight,
+                        rowFieldFocus: $isRowFieldFocused,
+                        cardFieldFocus: $isCardFieldFocused
                     )
                 }
             }
-            // A drag the drawer's hiding cut short leaves no height behind.
-            .onChange(of: viewModel.isDrawerExpanded) { drawerDragHeight = nil }
+            // A drag that hiding the drawer or the card cut short leaves no height behind.
+            .onChange(of: slot) { drawerDragHeight = nil }
+            .onChange(of: viewModel.isDrawerExpanded) { _, isExpanded in
+                if !isExpanded { viewModel.drawerDidCollapse() }
+            }
             // Keyed on the drawer being open too: opening it re-applies the
             // offset after the notes were scrolled, even when it is unchanged.
             .onChange(of: notesScrollKey, initial: true) { _, key in
@@ -491,5 +518,39 @@ private extension RecordingView {
             .frame(width: 820, height: 640)
             .background(Tokens.contentBackground)
             .task { await core.startRecording() }
+    }
+
+    #Preview("Recording Screen, chat field beside the toggle") {
+        let core = try! PreviewAppCore.make(liveTranscription: LiveTranscriptionService.preview(drawerExpanded: false)) // swiftlint:disable:this force_try
+        let viewModel = RecordingViewModel(core: core)
+        RecordingView(viewModel: viewModel)
+            .frame(width: 820, height: 640)
+            .background(Tokens.contentBackground)
+            .task { await core.startRecording() }
+    }
+
+    #Preview("Recording Screen, chat card") {
+        let core = try! PreviewAppCore.make(liveTranscription: LiveTranscriptionService.preview(drawerExpanded: false)) // swiftlint:disable:this force_try
+        let viewModel = RecordingViewModel(core: core)
+        RecordingView(viewModel: viewModel)
+            .frame(width: 820, height: 640)
+            .background(Tokens.contentBackground)
+            .task {
+                await core.startRecording()
+                viewModel.openChat()
+            }
+    }
+
+    #Preview("Recording Screen, drawer opened from the chat") {
+        let core = try! PreviewAppCore.make(liveTranscription: LiveTranscriptionService.preview(drawerExpanded: false)) // swiftlint:disable:this force_try
+        let viewModel = RecordingViewModel(core: core)
+        RecordingView(viewModel: viewModel)
+            .frame(width: 820, height: 640)
+            .background(Tokens.contentBackground)
+            .preferredColorScheme(.dark)
+            .task {
+                await core.startRecording()
+                viewModel.showTranscript(at: 4)
+            }
     }
 #endif

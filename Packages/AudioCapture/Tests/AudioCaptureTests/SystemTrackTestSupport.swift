@@ -9,11 +9,18 @@ import Foundation
 final class SystemTestFile {
     let url: URL
     let file: ExtAudioFileRef
+    /// Interleaved Float32 at `clientRate` and `channelCount`: the client
+    /// format the file is given unless `setsClientFormat` is false.
+    let clientFormat: AVAudioFormat
     private var disposed = false
 
     /// - Parameter setsClientFormat: False leaves the client format compressed,
     ///   so every PCM write fails.
     init(clientRate: Double, channelCount: UInt32 = 1, setsClientFormat: Bool = true) throws {
+        guard let format = SystemFormatConverter.interleavedFloatFormat(sampleRate: clientRate, channelCount: channelCount) else {
+            throw SystemTestFileError("No client format at \(clientRate) Hz")
+        }
+        clientFormat = format
         url = FileManager.default.temporaryDirectory
             .appendingPathComponent("system-track-\(UUID()).aac")
         let encoder = EncoderSettings.voice

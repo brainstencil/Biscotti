@@ -37,6 +37,7 @@ let package = Package(
         .library(name: "Vocabulary", targets: ["Vocabulary"]),
         .library(name: "MCPServer", targets: ["MCPServer"]),
         .library(name: "VoiceprintMatching", targets: ["VoiceprintMatching"]),
+        .library(name: "MeetingChat", targets: ["MeetingChat"]),
         .executable(name: "voiceprint-cli", targets: ["voiceprint-cli"])
     ],
     dependencies: [
@@ -768,6 +769,26 @@ let package = Package(
         .testTarget(
             name: "VoiceprintMatchingTests",
             dependencies: ["VoiceprintMatching", "DataStore"],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
+            name: "MeetingChat",
+            dependencies: [
+                "DataStore",
+                "Formatting",
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LocalLLM", package: "LocalLLM")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "MeetingChatTests",
+            dependencies: [
+                "MeetingChat",
+                "DataStore",
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LocalLLM", package: "LocalLLM")
+            ],
             swiftSettings: warningsAsErrors
         ),
         .executableTarget(

@@ -12,7 +12,7 @@ No phase changes `Packages/Transcription`, `AudioCapture`, `LocalLLM` or `MCPSer
 
 - [x] Phase 1: Chat storage: `ChatThread` and `ChatMessage` models, the `Meeting.chatThreads` cascade, read models, write methods, and the test that opens a store made before the chat models [chat_store]
 - [ ] Phase 2: `LLMBroker` in `Intelligence`: leases, priorities, keep-alive and idle close, `BrokeredLLMRunner` and `LiveLLMConnectionOpener`; `Intelligence` moves onto the broker in `AppCore`, `PreviewAppCore` and `CoreFixture` [llm_broker]
-- [ ] Phase 3: The `MeetingChat` target and `ChatContextBuilder`: evidence lines, the prompt, fitting and passage selection for long meetings, and answer parsing with citation checks [chat_context]
+- [x] Phase 3: The `MeetingChat` target and `ChatContextBuilder`: evidence lines, the prompt, fitting and passage selection for long meetings, and answer parsing with citation checks [chat_context]
 - [ ] Phase 4: `MeetingChatService`: availability, asking, Stop, Retry, threads, recovery of answers interrupted by a quit, the resource policy, and the `AppCore` and `CoreFixture` wiring; a `MeetingChatAITests` suite added to `make test-ai` [meeting_chat_service, chat_context]
 - [ ] Phase 5: Measurement tools: the DEBUG `ChatLoadDriver`, the three plans, and `Tools/chat_bench/analyze.py`, with their tests [chat_measurement]
 - [ ] Phase 6: Run the measurement in Biscotti Dev: baseline, concurrent and after-stop with Gemma 4 E2B, concurrent with Gemma 4 12B, and concurrent with Low Power Mode on (you turn it on). You also run `make test-ai`. Write `research/chat_measurement/README.md`, set `ChatResourcePolicy`'s thresholds, and stop for your review. Starting the recordings needs your go-ahead [chat_measurement]

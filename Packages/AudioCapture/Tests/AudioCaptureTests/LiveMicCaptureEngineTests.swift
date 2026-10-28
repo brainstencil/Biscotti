@@ -175,6 +175,8 @@ struct VoiceProcessingSettleWaitTests {
         let capturing = Atomic<Bool>(true)
     }
 
+    /// The configuration-change path bumps the graph generation when its
+    /// restart finishes, so the wait must end then, not at the timeout.
     @Test("Returns as soon as the configuration-change path starts a new graph")
     func returnsWhenGraphRebuilt() async {
         let state = EngineState()
@@ -193,6 +195,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start < .seconds(2), "The wait did not end when the graph was rebuilt")
     }
 
+    /// With no configuration change, `reconnect()` rebuilds by itself once
+    /// the wait times out.
     @Test("Returns false after the timeout when no new graph starts")
     func timesOutWithoutRebuild() async {
         let state = EngineState()
@@ -206,6 +210,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start >= .milliseconds(200))
     }
 
+    /// A request for the route the engine already runs on, after its tap
+    /// has delivered audio, is decided at once.
     @Test("A stale request keeps a delivering engine without waiting")
     func staleRequestKeepsEngine() async {
         let start = ContinuousClock.now
@@ -216,6 +222,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start < .milliseconds(500))
     }
 
+    /// An engine that a rebuild has just started is kept as soon as its tap
+    /// delivers audio, before the timeout.
     @Test("A fresh engine is kept once its first buffer arrives")
     func freshEngineKeptAfterFirstBuffer() async {
         let state = EngineState()
@@ -234,6 +242,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start < .seconds(2), "The wait did not end when the buffer arrived")
     }
 
+    /// An engine whose tap stays silent past the timeout is not kept, so the
+    /// caller rebuilds it.
     @Test("A fresh engine with no buffer is not kept after the timeout")
     func silentEngineNotKept() async {
         let start = ContinuousClock.now
@@ -244,6 +254,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start >= .milliseconds(200))
     }
 
+    /// A changed route always needs a new graph, so the decision returns
+    /// without polling for a buffer.
     @Test("A route change goes straight to the configuration-change wait")
     func routeChangeDoesNotWait() async {
         let start = ContinuousClock.now
@@ -254,6 +266,8 @@ struct VoiceProcessingSettleWaitTests {
         #expect(ContinuousClock.now - start < .milliseconds(500))
     }
 
+    /// A `stop()` during the wait ends it, so a pending reconnect does not
+    /// delay the end of the recording.
     @Test("Stops waiting when capture stops")
     func stopsWhenCaptureStops() async {
         let state = EngineState()

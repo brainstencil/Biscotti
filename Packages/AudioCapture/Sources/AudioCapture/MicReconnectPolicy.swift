@@ -45,6 +45,10 @@ enum MicReconnectDecision: Equatable {
 /// mic audio for 2–4 s, so a rebuild for a route the engine already uses
 /// only adds a gap.
 enum MicReconnectPolicy {
+    /// Keeps the engine only when it runs on the route it was built for:
+    /// `.keepEngine` once its tap has delivered audio, `.awaitFirstBuffer`
+    /// before that. A changed or unknown route, or a stopped engine, needs
+    /// a rebuild.
     static func decide(
         builtRoute: MicRoute?,
         currentRoute: MicRoute?,

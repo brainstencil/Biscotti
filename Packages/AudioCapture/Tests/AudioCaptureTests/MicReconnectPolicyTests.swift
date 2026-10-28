@@ -9,6 +9,8 @@ private let builtIn = MicRoute(inputID: 90, outputID: 83)
 
 @Suite("MicReconnectPolicy")
 struct MicReconnectPolicyTests {
+    /// A stale request after an AirPods flap: the engine already runs on the
+    /// current route and delivers audio.
     @Test("Keeps a running engine that delivers audio on the current route")
     func keepsEngineOnCurrentRoute() {
         let decision = MicReconnectPolicy.decide(
@@ -17,6 +19,8 @@ struct MicReconnectPolicyTests {
         #expect(decision == .keepEngine)
     }
 
+    /// A rebuild has just started the engine for this route, and its tap has
+    /// not delivered audio yet.
     @Test("Waits for the first buffer of a fresh engine on the current route")
     func awaitsFirstBufferOfFreshEngine() {
         let decision = MicReconnectPolicy.decide(
@@ -25,6 +29,7 @@ struct MicReconnectPolicyTests {
         #expect(decision == .awaitFirstBuffer)
     }
 
+    /// The default input moved from the AirPods to the built-in mic.
     @Test("Rebuilds when the default input changed")
     func rebuildsOnInputChange() {
         let decision = MicReconnectPolicy.decide(
@@ -34,6 +39,8 @@ struct MicReconnectPolicyTests {
         #expect(decision == .rebuild)
     }
 
+    /// Voice processing also uses the output, as its echo reference, so an
+    /// output change alone makes the engine's route stale.
     @Test("Rebuilds when only the default output changed")
     func rebuildsOnOutputChange() {
         let decision = MicReconnectPolicy.decide(
@@ -43,6 +50,7 @@ struct MicReconnectPolicyTests {
         #expect(decision == .rebuild)
     }
 
+    /// A stopped engine delivers no audio, whatever its route.
     @Test("Rebuilds a stopped engine even on the current route")
     func rebuildsStoppedEngine() {
         let decision = MicReconnectPolicy.decide(
@@ -51,6 +59,8 @@ struct MicReconnectPolicyTests {
         #expect(decision == .rebuild)
     }
 
+    /// Without both routes (after a teardown, or with no default device) the
+    /// policy cannot tell that a request is stale.
     @Test("Rebuilds when the built or current route is unknown")
     func rebuildsOnUnknownRoute() {
         #expect(MicReconnectPolicy.decide(
@@ -89,9 +99,9 @@ struct StaleMicReconnectWriterTests {
         var clock = 2.0
         try feed(tap, session: session, format: tapFormat(sampleRate: 24000, channels: 3), from: 0, to: clock)
 
-        // Acts on each request as the engine does. A rebuild stops the tap for
-        // the time the rebuild took on hardware.
         var decisions: [MicReconnectDecision] = []
+        /// Acts on a request as the engine does. A rebuild stops the tap for
+        /// the time the rebuild took on hardware.
         func reconnect(rebuildSeconds: Double) {
             let decision = decide(engineRoute, current: builtIn, session: session)
             decisions.append(decision)
@@ -138,6 +148,8 @@ struct StaleMicReconnectWriterTests {
         )
     }
 
+    /// A tap format like voice processing's: non-interleaved Float32 with a
+    /// discrete channel layout.
     private func tapFormat(sampleRate: Double, channels: UInt32) throws -> AVAudioFormat {
         // More than 2 channels needs an explicit layout.
         let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | channels))

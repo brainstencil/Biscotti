@@ -37,7 +37,8 @@ public final class MeetingChatService {
     let live: LiveTranscriptionService
     let recordingMeetingID: @MainActor () -> UUID?
     let isTranscribing: @MainActor (UUID) -> Bool
-    let policy: ChatResourcePolicy
+    /// Variable only so the chat load driver can force its mode.
+    @ObservationIgnored var policy: ChatResourcePolicy
     let answerFlushInterval: Duration
     /// Time since the service started, on the injected clock.
     let elapsed: @Sendable () -> Duration
@@ -54,6 +55,11 @@ public final class MeetingChatService {
     @ObservationIgnored var threadLoadTokens: [UUID: Int] = [:]
     /// Answer view updates while answers streamed. Tests read it.
     @ObservationIgnored var answerFlushCount = 0
+
+    #if DEBUG
+        /// The chat load driver's listener (`report(_:)`). Debug builds only.
+        @ObservationIgnored var loadObserver: (@MainActor (ChatLoadEvent) -> Void)?
+    #endif
 
     /// - Parameters:
     ///   - modelURL: The active AI model's file, nil when none is downloaded.
@@ -217,6 +223,9 @@ public final class MeetingChatService {
     /// an earlier answer or summary is closed too, so its memory is free for
     /// the meeting.
     public func recordingDidStart() async {
+        if let meetingID = recordingMeetingID() {
+            report(.recordingStarted(meetingID: meetingID))
+        }
         guard policy.closesAfterAnswer(isRecording: true) else { return }
         logger.info("Recording started: closing the AI model when it is idle")
         await broker.closeWhenIdle()
@@ -224,7 +233,8 @@ public final class MeetingChatService {
 
     /// AppCore calls this when a recording stops, so a question waiting for
     /// the end starts.
-    public func recordingDidStop(meetingID _: UUID) async {
+    public func recordingDidStop(meetingID: UUID) async {
+        report(.recordingStopped(meetingID: meetingID))
         guard let run, run.isParked else { return }
         run.isParked = false
         run.mayWaitForRecording = false
@@ -317,9 +327,11 @@ public final class MeetingChatService {
         answerTask = nil
         answeringMeetingID = nil
         states[run.meetingID]?.isAnswering = false
+        report(.ended(run))
     }
 
-    private static func stopwatch(on clock: some Clock<Duration>) -> @Sendable () -> Duration {
+    /// Time since this call, on `clock`.
+    static func stopwatch(on clock: some Clock<Duration>) -> @Sendable () -> Duration {
         let start = clock.now
         return { start.duration(to: clock.now) }
     }

@@ -17,6 +17,10 @@ final class AnswerRun {
     var view: ChatMessageView
     /// Every token received so far.
     var text = ""
+    /// How many tokens were received.
+    var tokenCount = 0
+    /// The model's figures, once the stream said it finished.
+    var generation: GenerationResult?
     /// Set once the prompt is built. Before that, the answer has no basis.
     var prompt: ChatPrompt?
     /// Pulls the model's stream while it is read.
@@ -138,6 +142,7 @@ extension MeetingChatService {
         // A Stop during the model load ends the answer before a prompt exists.
         try Task.checkCancellation()
         run.leaseStarted = true
+        report(.leaseStarted(run, loadingModel: false))
         run.view.state = .streaming(.thinking)
         publish(run)
 
@@ -187,11 +192,16 @@ extension MeetingChatService {
             switch event {
             case let .token(text):
                 run.text += text
+                run.tokenCount += 1
+                if run.tokenCount == 1 {
+                    report(.firstToken(run))
+                }
                 flushIfDue(run)
             case .reasoningToken:
                 continue
-            case .done:
+            case let .done(result):
                 sawDone = true
+                run.generation = result
             }
         }
         return sawDone
@@ -214,6 +224,8 @@ extension MeetingChatService {
         guard self.run === run, !run.leaseStarted else { return }
         switch wait {
         case .loadingModel:
+            // The broker reports the load once it has lent the model.
+            report(.leaseStarted(run, loadingModel: true))
             run.view.state = .streaming(.loadingModel)
             logger.info("Lease wait: loading the model")
         case let .queued(behind) where behind == BrokeredLLMRunner.defaultPurpose:

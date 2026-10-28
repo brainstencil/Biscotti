@@ -1,0 +1,18 @@
+{
+  "name": "concurrent-12b",
+  "mode": "concurrent",
+  "closeModelAfterAnswer": false,
+  "startAfter": "recordingStart",
+  "startDelaySeconds": 120,
+  "intervalSeconds": 60,
+  "questions": [
+    "What did they decide about the shape of the remote?",
+    "What did they say about dropping the number buttons?",
+    "What did I say about the scroll-wheel push-button?",
+    "What did they decide about speech recognition?",
+    "How much more does an integrated button cost than a normal one?",
+    "List the action items so far.",
+    "Which buttons are they keeping?",
+    "What launch date did they set for the remote?"
+  ]
+}

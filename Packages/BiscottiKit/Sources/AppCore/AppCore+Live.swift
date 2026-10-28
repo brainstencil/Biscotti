@@ -5,6 +5,7 @@ import Foundation
 import Intelligence
 import LiveTranscriptionService
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import os
@@ -87,8 +88,18 @@ public extension AppCore {
             llmBroker: llmBroker,
             liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName)
         )
+        startChatLoadDriverIfRequested(core)
         logger.info("AppCore.live: done")
         return core
+    }
+
+    /// Debug builds: the chat measurement's load driver, when the app was
+    /// launched with `-chatLoadTest <plan.json>` (Tools/chat_bench).
+    @MainActor
+    private static func startChatLoadDriverIfRequested(_ core: AppCore) {
+        #if DEBUG
+            ChatLoadDriver.startIfRequested(chat: core.chat)
+        #endif
     }
 
     /// Builds the live `ModelManager` + `Intelligence` with real LocalLLM-backed

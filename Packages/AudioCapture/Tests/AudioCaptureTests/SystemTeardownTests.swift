@@ -16,6 +16,10 @@ struct SystemTeardownTests {
     func stopDuringReconnectWriterJoin() throws {
         let engine = LiveSystemCaptureEngine()
         let writer = HeldWriter()
+        // A check that throws must not leave the writer, and with it the
+        // first teardown, blocked. An extra signal after the release below
+        // is harmless.
+        defer { writer.release.signal() }
         engine.writerWillFinish = writer.hold
         engine.startWriterThread()
 
@@ -27,12 +31,17 @@ struct SystemTeardownTests {
         }
         try #require(writer.finishing.wait(timeout: .now() + 5) == .success, "The writer never began to finish")
 
-        // stop()'s teardown starts while the first teardown still waits.
+        // stop()'s teardown starts while the first teardown still waits. The
+        // 0.5 s check starts only once this thread runs, so a slow thread
+        // start cannot pass it.
+        let stopStarted = DispatchSemaphore(value: 0)
         let stopDone = DispatchSemaphore(value: 0)
         Thread.detachNewThread {
+            stopStarted.signal()
             engine.teardown()
             stopDone.signal()
         }
+        try #require(stopStarted.wait(timeout: .now() + 5) == .success, "stop()'s teardown thread never started")
         #expect(
             stopDone.wait(timeout: .now() + 0.5) == .timedOut,
             "stop()'s teardown returned while the writer could still write the file"

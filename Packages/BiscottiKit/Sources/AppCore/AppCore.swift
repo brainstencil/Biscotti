@@ -631,25 +631,6 @@ public final class AppCore {
         return meetingID
     }
 
-    /// Toggles recording: stops if currently recording, starts if idle.
-    /// Used by the global hotkey so a single shortcut can both start and
-    /// stop a session.
-    @discardableResult
-    public func toggleRecording() async -> UUID? {
-        if recording.state.isRecording {
-            return await stopRecording()
-        } else {
-            await startRecording()
-            return nil
-        }
-    }
-
-    /// Records a detected event (from a notification action). Starts
-    /// recording, optionally associated with the given calendar event.
-    public func recordDetectedEvent(eventKey: String?) async {
-        await startRecording(eventKey: eventKey)
-    }
-
     // MARK: - Navigation
 
     /// Opens a specific meeting from OUTSIDE the list (menu bar, Home recent,
@@ -689,6 +670,30 @@ public final class AppCore {
 
     // (refreshAllPermissions lives in an extension below to keep the class
     // body within the type_body_length lint limit.)
+}
+
+// MARK: - Recording shortcuts
+
+/// In an extension to keep the class body within the type_body_length lint limit.
+public extension AppCore {
+    /// Toggles recording: stops if currently recording, starts if idle.
+    /// Used by the global hotkey so a single shortcut can both start and
+    /// stop a session.
+    @discardableResult
+    func toggleRecording() async -> UUID? {
+        if recording.state.isRecording {
+            return await stopRecording()
+        } else {
+            await startRecording()
+            return nil
+        }
+    }
+
+    /// Records a detected event (from a notification action). Starts
+    /// recording, optionally associated with the given calendar event.
+    func recordDetectedEvent(eventKey: String?) async {
+        await startRecording(eventKey: eventKey)
+    }
 }
 
 // MARK: - Onboarding

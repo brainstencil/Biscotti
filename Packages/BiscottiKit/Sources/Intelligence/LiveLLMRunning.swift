@@ -32,7 +32,7 @@ public struct LiveLLMRunner: LLMRunning {
 public struct LiveLLMConnectionOpener: LLMConnectionOpening {
     private let serviceName: String
 
-    public init(serviceName: String = RuntimeConfiguration.current.llmServiceName) {
+    public init(serviceName: String = "net.scosman.biscotti.BiscottiLLM") {
         self.serviceName = serviceName
     }
 

@@ -52,8 +52,10 @@ public extension RecordingViewModel {
     }
 
     /// A time chip in the chat: the drawer opens at that moment, with the
-    /// cited bubble highlighted and "Back to chat" in its header.
+    /// cited bubble highlighted and "Back to chat" in its header. With the
+    /// live transcript off there is no drawer to open, so the card stays.
     func showTranscript(at time: TimeInterval) {
+        guard showsLiveTranscript else { return }
         chat?.isCardOpen = false
         transcriptOpenedFromChat = true
         transcriptHighlight = TranscriptHighlight(time: time)

@@ -1,3 +1,4 @@
+import AppKit
 import DesignSystem
 import MeetingChat
 import SwiftUI
@@ -54,15 +55,21 @@ public struct ChatQuestionField: View {
     private func editor(_ presentation: ChatFieldPresentation) -> some View {
         let shape = RoundedRectangle(cornerRadius: Tokens.chatFieldHeight / 2, style: .continuous)
         return HStack(alignment: .bottom, spacing: Tokens.spacingSM) {
-            textField(presentation)
-
-            if let count = ChatFieldPresentation.characterCount(length: state.draft.count) {
-                Text(count)
-                    .font(.system(size: 11))
-                    .monospacedDigit()
-                    .foregroundStyle(.inkTertiary)
-                    .fixedSize()
-                    .padding(.bottom, 13)
+            // The count goes under the text, at its right, so the text keeps
+            // its width: when a paste brings the count in beside the text,
+            // the text field narrows without wrapping its lines again, and
+            // their ends are cut off.
+            VStack(alignment: .trailing, spacing: 0) {
+                textField(presentation)
+                if let count = ChatFieldPresentation.characterCount(length: state.draft.count) {
+                    Text(count)
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundStyle(.inkTertiary)
+                        .fixedSize()
+                        .padding(.top, -Tokens.spacingXS)
+                        .padding(.bottom, Self.buttonInset)
+                }
             }
 
             ChatRoundButton(kind: presentation.button) {
@@ -153,12 +160,17 @@ public struct ChatQuestionField: View {
 
     // MARK: - Keys
 
-    /// Return sends; Shift-Return (or Option-Return) adds a line.
+    /// Return sends; Shift-Return (or Option-Return) adds a line. While an
+    /// input method composes (Chinese, Japanese), Return is the input
+    /// method's: it confirms the composition.
     private func handleReturn(_ press: KeyPress) -> KeyPress.Result {
-        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-            insertLineBreak()
-        } else {
+        switch ChatReturnKey.action(modifiers: press.modifiers, isComposing: ChatReturnKey.isComposingInKeyWindow) {
+        case .send:
             send()
+        case .lineBreak:
+            insertLineBreak()
+        case .compose:
+            return .ignored
         }
         return .handled
     }
@@ -202,6 +214,29 @@ public struct ChatQuestionField: View {
         guard text.count <= ChatFieldPresentation.maxLength else { return }
         state.draft = text
         selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: offset + 1))
+    }
+}
+
+/// What Return does in the question field.
+enum ChatReturnKey: Equatable {
+    case send
+    case lineBreak
+    /// Left to the input method, which confirms its composition.
+    case compose
+
+    static func action(modifiers: EventModifiers, isComposing: Bool) -> Self {
+        if isComposing { return .compose }
+        return modifiers.contains(.shift) || modifiers.contains(.option) ? .lineBreak : .send
+    }
+
+    /// Whether the text view being edited in the key window holds marked
+    /// text: an input method's composition, not yet confirmed.
+    @MainActor static var isComposingInKeyWindow: Bool {
+        isComposing(NSApp.keyWindow?.firstResponder)
+    }
+
+    @MainActor static func isComposing(_ responder: NSResponder?) -> Bool {
+        (responder as? any NSTextInputClient)?.hasMarkedText() ?? false
     }
 }
 

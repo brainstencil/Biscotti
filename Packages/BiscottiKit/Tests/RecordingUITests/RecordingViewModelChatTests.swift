@@ -98,6 +98,22 @@ struct RecordingViewModelChatTests {
         await ctx.stop()
     }
 
+    @Test("With the live transcript off, a time chip leaves the card open: there is no drawer to show")
+    func chipWithLiveOffKeepsCard() async throws {
+        let ctx = try await ChatScreenFixture(liveEnabled: false)
+        let chat = try ctx.chat()
+        ctx.viewModel.openChat()
+
+        ctx.viewModel.showTranscript(at: 42)
+
+        #expect(chat.isCardOpen)
+        #expect(!ctx.viewModel.isDrawerExpanded)
+        #expect(!ctx.viewModel.transcriptOpenedFromChat)
+        #expect(ctx.viewModel.transcriptHighlight == nil)
+        #expect(ctx.viewModel.bottomSlot == .chat)
+        await ctx.stop()
+    }
+
     @Test("Back to chat goes once the drawer closes or opens some other way")
     func backToChatClears() async throws {
         let ctx = try await ChatScreenFixture()

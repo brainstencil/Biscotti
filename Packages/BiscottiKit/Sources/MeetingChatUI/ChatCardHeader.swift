@@ -88,8 +88,11 @@ struct ChatHistoryMenu: View {
             HStack(spacing: 3) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 13, weight: .medium))
+                // One element for VoiceOver: otherwise the menu gives each
+                // image its own "Chat history" menu button.
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
+                    .accessibilityHidden(true)
             }
             .foregroundStyle(.inkSecondary)
             .padding(.horizontal, 6)

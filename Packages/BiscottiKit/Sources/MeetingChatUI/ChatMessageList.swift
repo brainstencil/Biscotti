@@ -39,14 +39,11 @@ struct ChatMessageList: View {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .alignment)
         .onScrollGeometryChange(for: ScrollPlace.self, of: ScrollPlace.init) { old, new in
-            // Scrolling up, not new text below, stops the following.
-            if new.offset < old.offset - 1, !new.isAtBottom {
-                isFollowing = false
-            }
-            if new.isAtBottom {
-                isFollowing = true
-            }
+            isFollowing = new.follows(after: old, wasFollowing: isFollowing)
             isAtBottom = new.isAtBottom
+            if new.needsScrollToEnd(after: old, isFollowing: isFollowing) {
+                position.scrollTo(edge: .bottom)
+            }
         }
         // Another thread from History opens at its newest message, wherever
         // the last one was scrolled to: the scroll view stays the same one.
@@ -120,13 +117,42 @@ struct ChatMessageList: View {
 }
 
 /// Where the list is scrolled, as far as following new text cares.
-private struct ScrollPlace: Equatable {
+struct ScrollPlace: Equatable {
     let offset: CGFloat
     let isAtBottom: Bool
+    let contentHeight: CGFloat
+    let containerHeight: CGFloat
 
+    /// Following stops when the user scrolls up and starts again at the end.
+    /// An offset that moves up is the user's, except in the two cases where
+    /// the scroll view moves it itself: the content fitted the card (a first
+    /// answer sits at the card's bottom, and the next question makes the
+    /// content outgrow it), or the card changed height. New text below the
+    /// end does not move the offset of a list that already scrolls.
+    func follows(after old: ScrollPlace, wasFollowing: Bool) -> Bool {
+        if isAtBottom { return true }
+        if old.contentHeight <= old.containerHeight || containerHeight != old.containerHeight {
+            return wasFollowing
+        }
+        return offset < old.offset - 1 ? false : wasFollowing
+    }
+
+    /// The content or the card changed height and the end left the view
+    /// while the list follows, for example a row measured after the last
+    /// scroll to the end: scroll to the end again.
+    func needsScrollToEnd(after old: ScrollPlace, isFollowing: Bool) -> Bool {
+        isFollowing && !isAtBottom && (contentHeight != old.contentHeight || containerHeight != old.containerHeight)
+    }
+}
+
+extension ScrollPlace {
     init(_ geometry: ScrollGeometry) {
-        offset = geometry.contentOffset.y
-        isAtBottom = geometry.visibleRect.maxY >= geometry.contentSize.height - ChatMessageList.bottomTolerance
+        self.init(
+            offset: geometry.contentOffset.y,
+            isAtBottom: geometry.visibleRect.maxY >= geometry.contentSize.height - ChatMessageList.bottomTolerance,
+            contentHeight: geometry.contentSize.height,
+            containerHeight: geometry.containerSize.height
+        )
     }
 }
 

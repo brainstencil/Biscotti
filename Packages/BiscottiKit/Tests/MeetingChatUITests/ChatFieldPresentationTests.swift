@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import MeetingChat
@@ -135,6 +136,31 @@ struct ChatFieldPresentationTests {
         // The download ends while the user types notes: the editor appears and takes nothing.
         world.availability = .available
         #expect(!ChatQuestionField.takesRequestedFocus(state: state, placement: .meetingCard))
+    }
+
+    @Test("Return sends, Shift- or Option-Return adds a line, and during an input method's composition Return is the input method's")
+    func returnKey() {
+        #expect(ChatReturnKey.action(modifiers: [], isComposing: false) == .send)
+        #expect(ChatReturnKey.action(modifiers: .shift, isComposing: false) == .lineBreak)
+        #expect(ChatReturnKey.action(modifiers: .option, isComposing: false) == .lineBreak)
+        #expect(ChatReturnKey.action(modifiers: [], isComposing: true) == .compose)
+        #expect(ChatReturnKey.action(modifiers: .shift, isComposing: true) == .compose)
+    }
+
+    @Test("a text view with marked text is composing; without it, or with no text view, it is not")
+    @MainActor
+    func composingReadsMarkedText() {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        textView.string = "会議"
+        #expect(!ChatReturnKey.isComposing(textView))
+
+        textView.setMarkedText("かいぎ", selectedRange: NSRange(location: 3, length: 0), replacementRange: NSRange(location: 2, length: 0))
+        #expect(ChatReturnKey.isComposing(textView))
+
+        textView.unmarkText()
+        #expect(!ChatReturnKey.isComposing(textView))
+        #expect(!ChatReturnKey.isComposing(nil))
+        #expect(!ChatReturnKey.isComposing(NSView()))
     }
 
     @Test("the count shows from 1,800 characters, against the 2,000 limit")

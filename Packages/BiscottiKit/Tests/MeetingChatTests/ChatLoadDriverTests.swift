@@ -18,20 +18,21 @@
             .deletingLastPathComponent() // the repository
             .appending(path: "Tools/chat_bench/plans")
 
-        @Test("The four plans decode, and the plan file is read from the launch arguments")
+        @Test("The five plans decode, and the plan file is read from the launch arguments")
         func planParses() throws {
-            let names = ["baseline", "concurrent-e2b", "concurrent-12b", "after-stop"]
+            let names = ["baseline", "concurrent-e2b", "concurrent-12b", "after-stop", "concurrent-e2b-hold"]
             let plans = try names.map { try ChatLoadPlan.load(from: Self.plans.appending(path: "\($0).json")) }
 
             #expect(plans.map(\.name) == names)
-            #expect(plans.map(\.mode) == [.concurrent, .concurrent, .concurrent, .concurrent])
+            #expect(plans.map(\.mode) == [.concurrent, .concurrent, .concurrent, .concurrent, .holdLiveTranscript])
             // Macs that use E2B (under 24 GB) close the model after each answer during a recording.
-            #expect(plans.map(\.closeModelAfterAnswer) == [nil, true, false, nil])
-            #expect(plans.map(\.startAfter) == [.recordingStart, .recordingStart, .recordingStart, .recordingStop])
-            #expect(plans.map(\.questions.count) == [0, 8, 8, 4])
-            #expect(plans.map(\.model) == ["gemma-4-e2b", "gemma-4-e2b", "gemma-4-12b", "gemma-4-e2b"])
+            #expect(plans.map(\.closeModelAfterAnswer) == [nil, true, false, nil, true])
+            #expect(plans.map(\.startAfter) == [.recordingStart, .recordingStart, .recordingStart, .recordingStop, .recordingStart])
+            #expect(plans.map(\.questions.count) == [0, 8, 8, 4, 8])
+            #expect(plans.map(\.model) == ["gemma-4-e2b", "gemma-4-e2b", "gemma-4-12b", "gemma-4-e2b", "gemma-4-e2b"])
             #expect(plans.allSatisfy { $0.record == ChatLoadPlan.Recording(startAfterSeconds: 10, durationSeconds: 900) })
             #expect(plans[1].questions == plans[2].questions)
+            #expect(plans[4].questions == plans[1].questions, "the held run repeats concurrent-e2b")
             #expect(plans[1].dueTime(ofQuestion: 0) == .seconds(120))
             #expect(plans[1].dueTime(ofQuestion: 7) == .seconds(540))
             #expect(plans[3].dueTime(ofQuestion: 3) == .zero)
@@ -196,6 +197,9 @@
             let answers = ChatResourcePolicy(physicalMemory: 64 * gib)
             #expect(waits.override(mode: .concurrent).mode() == .concurrent)
             #expect(answers.override(mode: .waitForStop).mode() == .waitForStop)
+            #expect(waits.override(mode: .holdLiveTranscript).mode() == .holdLiveTranscript)
+            #expect(answers.override(mode: .holdLiveTranscript).override(mode: .concurrent).mode() == .concurrent)
+            #expect(answers.override(mode: .holdLiveTranscript).override(mode: .waitForStop).mode() == .waitForStop)
             #expect(answers.override(mode: .waitForStop).keepAlive(isRecording: true) == answers.keepAlive(isRecording: true))
             #expect(answers.override(mode: .concurrent, closesAfterAnswer: true).keepAlive(isRecording: true) == .close)
             #expect(answers.override(mode: .concurrent, closesAfterAnswer: true).keepAlive(isRecording: false) == .keepOpen(.seconds(180)))

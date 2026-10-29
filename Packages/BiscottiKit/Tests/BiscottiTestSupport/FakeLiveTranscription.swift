@@ -34,6 +34,17 @@ public actor FakeLiveEngine: LiveEngineSession {
     public private(set) var offerAttempts = 0
     public private(set) var intervals: [TimeInterval] = []
     public private(set) var pausedCalls: [Bool] = []
+    /// Chunks taken while paused, which the real worker drops as a gap.
+    public private(set) var offeredWhilePaused: [LiveAudioChunk] = []
+    /// How long `setPaused` takes to return. The engine is paused or resumed
+    /// when it is called, as the worker handles messages in the order sent.
+    public var pauseDelay: Duration = .zero
+    /// `setPaused` calls that have not returned.
+    public private(set) var pendingPauseCalls = 0
+    /// How long `offer` takes before the chunk reaches the engine, so a
+    /// `setPaused` sent meanwhile lands first.
+    public var offerDelay: Duration = .zero
+    private var isPaused = false
     public private(set) var finishTimeouts: [Duration] = []
     public private(set) var isCancelled = false
     public var acceptsChunks = true
@@ -60,8 +71,10 @@ public actor FakeLiveEngine: LiveEngineSession {
 
     public func offer(_ chunk: LiveAudioChunk) async -> Bool {
         offerAttempts += 1
+        if offerDelay > .zero { try? await Task.sleep(for: offerDelay) }
         guard acceptsChunks, !isCancelled else { return false }
         offered.append(chunk)
+        if isPaused { offeredWhilePaused.append(chunk) }
         return true
     }
 
@@ -75,6 +88,10 @@ public actor FakeLiveEngine: LiveEngineSession {
 
     public func setPaused(_ paused: Bool) async {
         pausedCalls.append(paused)
+        isPaused = paused
+        pendingPauseCalls += 1
+        if pauseDelay > .zero { try? await Task.sleep(for: pauseDelay) }
+        pendingPauseCalls -= 1
     }
 
     public func finish(timeout: Duration) async -> [LiveTrackUpdate] {
@@ -100,6 +117,14 @@ public actor FakeLiveEngine: LiveEngineSession {
 
     public func setAcceptsChunks(_ accepts: Bool) {
         acceptsChunks = accepts
+    }
+
+    public func setPauseDelay(_ delay: Duration) {
+        pauseDelay = delay
+    }
+
+    public func setOfferDelay(_ delay: Duration) {
+        offerDelay = delay
     }
 
     public func setFinish(_ behavior: FinishBehavior) {

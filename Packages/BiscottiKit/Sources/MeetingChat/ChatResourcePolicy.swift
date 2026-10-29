@@ -2,14 +2,18 @@ import Foundation
 import Intelligence
 
 /// How chat shares this Mac with a recording: whether a question asked during
-/// a recording waits for it to stop, and whether the AI model stays loaded
-/// after an answer.
+/// a recording waits for it to stop or holds the live transcript, and whether
+/// the AI model stays loaded after an answer.
 public struct ChatResourcePolicy: Sendable, Equatable {
     public enum Mode: Sendable, Equatable {
         /// Answers run beside the recording and the live transcript.
         case concurrent
         /// A question asked during a recording waits until it stops.
         case waitForStop
+        /// An answer during a recording holds the live transcript's decoding
+        /// (`LiveTranscriptionService.holdDecoding`) while it is written; the
+        /// live text catches up afterwards.
+        case holdLiveTranscript
     }
 
     public var physicalMemory: UInt64
@@ -27,6 +31,15 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     /// and samples once a second; and 8 GB Macs start with the live
     /// transcript off, so waiting costs them little.
     public var waitForStopMaximumMemory: UInt64
+    /// Whether answers during a recording hold the live transcript, on Macs
+    /// that do not wait for Stop.
+    ///
+    /// Off on every Mac. The measurement found one live decode over the
+    /// contention limit with Low Power Mode on, standing in for a slower
+    /// chip; the hold is one of the remedies the user chooses between
+    /// (specs/projects/meeting_chat/research/chat_measurement, "Phase 7:
+    /// remedies"). Only the chat load driver turns it on until then.
+    public var holdsLiveTranscript: Bool
     /// During a recording, Macs with less memory than this close the model
     /// after each answer, to free its memory for the rest of the meeting.
     public var closeAfterAnswerBelowMemory: UInt64
@@ -36,11 +49,13 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     public init(
         physicalMemory: UInt64,
         waitForStopMaximumMemory: UInt64 = 8 << 30,
+        holdsLiveTranscript: Bool = false,
         closeAfterAnswerBelowMemory: UInt64 = 24 << 30,
         idleKeepAlive: Duration = .seconds(180)
     ) {
         self.physicalMemory = physicalMemory
         self.waitForStopMaximumMemory = waitForStopMaximumMemory
+        self.holdsLiveTranscript = holdsLiveTranscript
         self.closeAfterAnswerBelowMemory = closeAfterAnswerBelowMemory
         self.idleKeepAlive = idleKeepAlive
     }
@@ -53,7 +68,8 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     /// What a question asked during a recording does. Outside a recording the
     /// mode does not apply.
     public func mode() -> Mode {
-        physicalMemory <= waitForStopMaximumMemory ? .waitForStop : .concurrent
+        if physicalMemory <= waitForStopMaximumMemory { return .waitForStop }
+        return holdsLiveTranscript ? .holdLiveTranscript : .concurrent
     }
 
     /// What the broker does with the model after an answer.

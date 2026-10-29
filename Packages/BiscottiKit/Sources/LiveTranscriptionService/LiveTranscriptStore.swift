@@ -190,11 +190,17 @@ struct LiveTranscriptStore {
         extendedThroughGaps(progress[track]?.settledThrough ?? startTime, on: track)
     }
 
+    /// How far the live text of the active track furthest behind is from the
+    /// newest captured audio; nil while no track is active.
+    var lag: TimeInterval? {
+        let watermark = captureWatermark
+        return activeTracks.map { watermark - transcribedThrough($0) }.max()
+    }
+
     /// True when an active track's live text is more than `catchUpThreshold`
     /// behind the newest captured audio.
     var isCatchingUp: Bool {
-        let watermark = captureWatermark
-        return activeTracks.contains { watermark - transcribedThrough($0) > Self.catchUpThreshold }
+        (lag ?? 0) > Self.catchUpThreshold
     }
 
     /// A frozen copy. Without the tail, tails are stripped, and a row that had

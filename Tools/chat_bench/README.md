@@ -6,6 +6,7 @@ Tools for the meeting chat measurement (`specs/projects/meeting_chat/components/
   - `baseline` asks nothing.
   - `concurrent-e2b` and `concurrent-12b` ask the same 8 questions, every 60 s from minute 2 of the recording. They differ in what happens to the AI model after each answer (see [Plans and models](#plans-and-models)).
   - `after-stop` asks 4 questions right after Stop.
+  - `concurrent-e2b-hold` is `concurrent-e2b` with the live transcript held while each answer is written (mode `holdLiveTranscript`, see [A held run](#a-held-run)).
 - `run.sh`: runs one measurement with nobody at the Mac, from the app's start to the analysis.
 - `analyze.py`: reads a capture of the unified log and writes `results/<run>.json` and `results/<run>.md`.
 - `test_analyze.py`, `testdata/`: the analysis tests.
@@ -85,7 +86,7 @@ No step needs sudo. Run `log`, `open` and `pgrep` outside the agent sandbox: `lo
 | Field | Meaning |
 |---|---|
 | `name` | The plan's name, in the `plan` line. `analyze.py` warns when a name with `e2b` or `12b` loaded no model file with that tag. |
-| `mode` | `concurrent` or `waitForStop`, forced on the resource policy for the run. |
+| `mode` | `concurrent`, `waitForStop` or `holdLiveTranscript`, forced on the resource policy for the run. `holdLiveTranscript` holds the live transcript's decoding while each answer is written during the recording; no Mac uses it by default. |
 | `model` | Optional. The catalog model to select, as Settings does (`gemma-4-e2b`, `gemma-4-12b`). It changes the development data's model setting. If the model is not downloaded, the plan aborts. |
 | `record` | Optional. `startAfterSeconds`: from the end of the app's launch (and of its speech models' preparation) to Record. `durationSeconds`: from the recording's start to Stop. The app records through the Record and Stop buttons' paths. The plan aborts if the live transcript is off or its model is missing, or if no recording starts. |
 | `closeModelAfterAnswer` | Optional. Forces whether the model closes after each answer during a recording. |
@@ -106,8 +107,9 @@ The memory and contention figures must show what the Macs that use each model do
 | After Stop | `after-stop.json` | Gemma 4 E2B |
 | Concurrent, 12B | `concurrent-12b.json` | Gemma 4 12B |
 | Concurrent, Low Power Mode on | `concurrent-e2b.json` | Gemma 4 E2B |
+| Held, Low Power Mode on (phase 7) | `concurrent-e2b-hold.json` | Gemma 4 E2B |
 
-Do the runs in this order, which is the component doc's order. The Low Power Mode run stands in for a slower chip, and slower Macs use E2B.
+Do the runs in this order, which is the component doc's order. The Low Power Mode run stands in for a slower chip, and slower Macs use E2B. Name a Low Power Mode run with `lowpower` (for example `lowpower-e2b-hold`): the analysis then warns if the live transcript updated every second, which means Low Power Mode was off.
 
 ## Why `log stream`
 
@@ -153,6 +155,16 @@ Two plans are normally undetermined, and that is not a capture fault:
 - `baseline` asks nothing: "undetermined (no answers)".
 - `after-stop` answers after Stop, when the live transcript is off: usually "undetermined (no live decode lines in the answer windows)". The live transcript finishes its last words for up to 10 s after Stop. If those decodes fall in the first answer's window, the result passes or fails on them alone. A watchdog reset at Stop also fails it: the watchdog acts only when a live session ends.
 
+### A held run
+
+In a plan with mode `holdLiveTranscript`, each answer during the recording holds the live transcript's decoding, from before the model loads to the end of its stream. The audio waits in the app and is decoded after the answer, so the live text falls behind during the answer and catches up afterwards. The table adds what matters for such a run:
+
+- **Live hold per answer**: how long decoding was held, and how far the live text was behind the newest audio when the hold ended (`Live decoding resumes after a … s hold, … s behind`).
+- **Catch-up after answers**: as for any run, from done until the live transcript is live again. The live transcript reports "catching up" only once it is 10 s behind, so a hold shorter than that shows a catch-up of 0 s even though the text was behind.
+- **Live gaps**: audio missing from the live text, from each live session's end line. A hold should leave none. **Rejected live updates** and **Live finish after Stop** show text the live transcript could not keep.
+
+No decode can start inside a held window, so the contention rule applies to a held run like this: the 5 s decode limit covers the decodes inside the answer windows (one already running when the hold began) and the decodes that start in the 30 s after each answer's done (before the next answer), where the held audio is decoded. Watchdog resets and the median catch-up apply unchanged. A held run with no decode lines inside or after its answers is undetermined. For other runs, the table shows the decodes after answers for reference only.
+
 ### Warnings
 
 The table and the standard error output list problems with the capture. Each one means that some figures may be wrong or missing. Examples:
@@ -161,6 +173,8 @@ The table and the standard error output list problems with the capture. Each one
 - no `recording-started` line, so the memory figures cover the whole capture;
 - an `abort` line: the plan could not run;
 - a plan whose name says `e2b` or `12b` while the run loaded another model;
+- an answer in a held run that took no live hold;
+- a run named `lowpower…` whose live transcript updated every second;
 - answers the driver did not ask: someone used the chat in the app during the run;
 - lines from more than one Biscotti Dev process;
 - a missing worker, or a worker whose memory was never read while it had to run;

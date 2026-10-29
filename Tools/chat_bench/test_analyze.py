@@ -21,7 +21,7 @@ writes, with the fields analyze.py reads. Times are seconds after 10:00:00:
 
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -87,8 +87,9 @@ def test_live_delay_inside_and_outside_answers(result):
 
 def test_longest_decodes_resets_and_restarts(result):
     # The 3 s decode ended after question 1's done, but started inside its window.
-    # The 3.5 s decode came before the engine was live.
-    assert result["longestDecodeMs"] == {"inside": 3000, "outside": 900}
+    # The 3.5 s decode came before the engine was live. The 0.9 s one started
+    # 14 s after question 1's done, before question 2's lease.
+    assert result["longestDecodeMs"] == {"inside": 3000, "outside": 900, "afterAnswers": 900}
     assert result["watchdogResets"] == 1
     assert result["engineRestarts"] == 1
     assert result["engineFailures"] == 0
@@ -347,9 +348,14 @@ def test_markdown_lists_every_measure(result):
         "| Citation validity | 5 of 6 (83%) |",
         "| Failed / partial answers | 1 failed, 1 partial |",
         "| Contention rule | fails (1 watchdog reset) |",
+        "| Longest live decode in the 30 s after answers | 0.90 s |",
+        "| Live gaps (audio missing from the live text) | none |",
+        "| Live finish after Stop | – |",
     ]:
         assert text in table
     assert "| Warnings | the llm worker was not found" in table
+    assert "Live hold per answer" not in table
+    assert "held run" not in table
 
 
 def test_main_writes_the_results(tmp_path, capsys):
@@ -361,3 +367,175 @@ def test_main_writes_the_results(tmp_path, capsys):
     assert saved["watchdogResets"] == 1
     assert (tmp_path / "excerpt.md").read_text() == output.out.removesuffix("\n")
     assert "warning: the llm worker was not found" in output.err
+
+
+# MARK: - A held run
+
+APP = "/x/Biscotti Dev.app/Contents/MacOS/Biscotti Dev"
+TRANSCRIBER = "/x/Biscotti Dev.app/Contents/XPCServices/BiscottiTranscriber.xpc/Contents/MacOS/BiscottiTranscriber"
+
+
+def event(seconds, category, message, process=APP):
+    """One `log stream --style ndjson` line, `seconds` after 10:00:00."""
+    stamp = (datetime(2026, 10, 29, 10) + timedelta(seconds=seconds)).strftime("%Y-%m-%d %H:%M:%S.%f-0700")
+    return json.dumps({
+        "timestamp": stamp, "eventType": "logEvent", "messageType": "Default", "subsystem": "net.scosman.biscotti",
+        "category": category, "processImagePath": process, "processID": 4343 if process == TRANSCRIBER else 4242,
+        "eventMessage": message,
+    }, ensure_ascii=False)
+
+
+def held_capture(mode="holdLiveTranscript", replacing=(), without=(), extra=()):
+    """Two answers with the live transcript held, in Low Power Mode:
+    - Question 1 (ask 10, lease 10.5, done 22): a decode that began at 9.8
+      ends at 10.6, inside the window. The hold ends at 21.9, 11.8 s long,
+      the live text 11.5 s behind; it caught up at 27.5. Decodes of 3 s and
+      1.2 s follow it.
+    - Question 2 (ask 70, lease 70.2, done 76): a 5.8 s hold, 5.9 s behind,
+      never 10 s behind; a 1.5 s decode follows it.
+    - The recording stops at 90; its session ends with no gap."""
+    plan = f"plan name=concurrent-e2b-hold mode={mode} closeModelAfterAnswer=true startAfter=recordingStart " \
+           "delay=120.0 interval=60.0 questions=2 model=gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf record=10.0+900.0 live=on"
+    done = "outcome=complete promptTokens=1000 context=4096 partial=false tokens=40 generated=40 generationSeconds=4.000 cited=1 linked=1"
+    events = [
+        (0, "chat-load", plan),
+        (0, "chat-load", f"worker name=transcriber path={TRANSCRIBER}"),
+        (0, "chat-load", "worker name=llm path=/x/BiscottiLLM"),
+        (1, "live", "Live session started: 2 track(s), update every 2.000000 s", TRANSCRIBER),
+        (2, "live", "Live status: starting"),
+        (3, "chat-load", "recording-started"),
+        (4, "live.latency", "decode ms=1000"),
+        (4, "live", "Live status: live"),
+        (10, "chat-load", "ask q=1 t=120.0"),
+        (10.1, "live", "Live decoding held (chat)"),
+        (10.5, "chat-load", "lease q=1 loading=true"),
+        (10.6, "live.latency", "decode ms=800"),
+        (11, "llm-broker", "Model opened: gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf in 500 ms"),
+        (13, "chat-load", "first-token q=1"),
+        (21, "live", "Live status: catchingUp"),
+        (21.9, "live", "Live decoding resumes after a 11.8 s hold, 11.5 s behind"),
+        (22, "chat-load", f"done q=1 {done}"),
+        (25.5, "live.latency", "decode ms=3000"),
+        (27, "live.latency", "decode ms=1200"),
+        (27.5, "live", "Live status: live"),
+        (70, "chat-load", "ask q=2 t=180.0"),
+        (70.1, "live", "Live decoding held (chat)"),
+        (70.2, "chat-load", "lease q=2 loading=true"),
+        (71, "llm-broker", "Model opened: gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf in 500 ms"),
+        (72, "chat-load", "first-token q=2"),
+        (75.9, "live", "Live decoding resumes after a 5.8 s hold, 5.9 s behind"),
+        (76, "chat-load", f"done q=2 {done}"),
+        (78, "live.latency", "decode ms=1500"),
+        (90, "chat-load", "recording-stopped"),
+        (91, "live", "Live session ended with 40 rows and 0 gaps."),
+        (91, "live", "Live finish after Stop: finished"),
+        (92, "chat-load", "plan-done"),
+        *extra,
+    ]
+    lines_ = [event(*item) for item in sorted(events, key=lambda item: item[0])]
+    lines_ = [line for line in lines_ if not any(text in line for text in without)]
+    for old, new in replacing:
+        lines_ = [line.replace(old, new) for line in lines_]
+    return lines_
+
+
+def analyzed_held(run="lowpower-e2b-hold", **changes):
+    return analyze.analyze(analyze.parse_entries(held_capture(**changes)), run)
+
+
+def test_a_held_run_reports_each_hold_its_lag_and_catch_up():
+    result = analyzed_held()
+    assert result["heldRun"] is True
+    assert result["liveHolds"] == 2
+    assert [row["heldSeconds"] for row in result["answers"]] == [11.8, 5.8]
+    assert [row["behindSeconds"] for row in result["answers"]] == [11.5, 5.9]
+    assert result["catchUpSeconds"]["perAnswer"] == [pytest.approx(5.5), 0.0]
+    # The 0.8 s decode was already running when question 1's hold began.
+    assert result["longestDecodeMs"] == {"inside": 800, "outside": 3000, "afterAnswers": 3000}
+    assert [row["longestDecodeAfterMs"] for row in result["answers"]] == [3000, 1500]
+    assert result["liveUpdateIntervalSeconds"] == [2.0]
+    assert result["liveFinish"] == ["finished"]
+    assert result["liveGaps"] == {"count": 0, "withSound": 0, "listed": 0, "byReason": {}, "seconds": 0}
+    assert result["warnings"] == []
+    assert result["contention"] == {"passes": True, "reasons": []}
+
+
+def test_a_held_run_fails_on_a_long_decode_after_an_answer():
+    # It starts at 22.8, after question 1's done at 22.
+    long_catch_up = [(28, "live.latency", "decode ms=5200")]
+    assert analyzed_held(extra=long_catch_up)["contention"] == {
+        "passes": False, "reasons": ["a decode after an answer took 5.2 s"],
+    }
+    # Without the hold, a decode after an answer is not the answer's doing.
+    assert analyzed_held(mode="concurrent", extra=long_catch_up)["contention"] == {"passes": True, "reasons": []}
+
+
+def test_a_held_run_needs_decodes_in_or_after_its_answers():
+    without = ["decode ms=800", "decode ms=3000", "decode ms=1200", "decode ms=1500"]
+    assert analyzed_held(without=without)["contention"] == {
+        "passes": None, "reasons": ["no live decode lines in or after the answer windows"],
+    }
+    # The in-flight decode alone is not needed: the rule reads the catch-up's decodes.
+    assert analyzed_held(without=["decode ms=800"])["contention"] == {"passes": True, "reasons": []}
+    assert analyzed_held(mode="concurrent", without=["decode ms=800"])["contention"] == {
+        "passes": None, "reasons": ["no live decode lines in the answer windows"],
+    }
+
+
+def test_a_held_answer_without_a_hold_warns():
+    result = analyzed_held(without=["after a 5.8 s hold"])
+    assert result["warnings"] == ["question 2 ran without a live hold: the plan holds the live transcript"]
+    assert result["answers"][1]["heldSeconds"] is None
+
+
+def test_gaps_rejected_updates_and_a_hold_ended_at_stop():
+    gaps = "Live session ended with 40 rows and 0 gaps.", \
+        "Live session ended with 40 rows and 3 gaps. mic 12.00+3.00 s queueOverflow; system 30.00+1.50 s captureGap silent; 1 more"
+    rejected = (50, "live", "Live settled text changed instead of growing (12 to 10 characters); the update for the row was rejected")
+    at_stop = (90, "live", "Live decoding resumes after a 2.0 s hold, 1.5 s behind (the recording stopped)")
+    result = analyzed_held(replacing=[gaps], extra=[rejected, at_stop])
+    assert result["liveGaps"] == {
+        "count": 3, "withSound": 1, "listed": 2, "byReason": {"captureGap": 1, "queueOverflow": 1}, "seconds": 4.5,
+    }
+    assert result["rejectedLiveUpdates"] == 1
+    table = analyze.markdown(result)
+    assert "| Live gaps (audio missing from the live text) | 3 (1 with sound, 4.5 s; 2 listed): captureGap 1, queueOverflow 1 |" in table
+    assert "| Rejected live updates (settled text changed) | 1 |" in table
+
+
+@pytest.mark.parametrize("message, expected", [
+    ("Live decoding resumes after a 11.8 s hold, 11.5 s behind", (11.8, 11.5, None)),
+    ("Live decoding resumes after a 0.4 s hold", (0.4, None, None)),
+    ("Live decoding resumes after a ? s hold (the recording stopped)", (None, None, "the recording stopped")),
+    ("Live decoding resumes after a 2.0 s hold, -0.3 s behind (the recording stopped)", (2.0, -0.3, "the recording stopped")),
+])
+def test_hold_end_lines(message, expected):
+    run = analyze.Run()
+    analyze.collect_live(run, analyze.Entry(time=5.0, category="live", message=message))
+    hold = run.holds[0]
+    assert (hold.held_seconds, hold.behind_seconds, hold.note) == expected
+
+
+def test_a_low_power_run_must_update_every_two_seconds():
+    warning = "the run is named for Low Power Mode, but the live transcript updated every 1 s (2 s in Low Power Mode): turn Low Power Mode on"
+    normal_power = [("update every 2.000000 s", "update every 1.000000 s")]
+    assert warning in analyzed_held(replacing=normal_power)["warnings"]
+    assert warning not in analyzed_held(run="concurrent-e2b-hold", replacing=normal_power)["warnings"]
+    assert warning not in analyzed_held()["warnings"]
+
+
+def test_markdown_for_a_held_run():
+    table = analyze.markdown(analyzed_held())
+    for text in [
+        "| Live hold per answer | q1 11.8 s, 11.5 s behind at its end; q2 5.8 s, 5.9 s behind at its end |",
+        "| Longest live decode inside answers | 0.80 s |",
+        "| Longest live decode in the 30 s after answers | 3.00 s |",
+        "| Catch-up after answers | median 2.8 s; per answer (s): 5.5, 0.0 |",
+        "| Live gaps (audio missing from the live text) | none |",
+        "| Live finish after Stop | finished |",
+        "| Live update interval | 2 s |",
+        "| Contention rule for a held run | no decode starts inside a held answer, so the 5 s limit covers the decodes "
+        "inside answers (one already running when the hold began) and those in the 30 s after them |",
+        "| Contention rule | passes |",
+    ]:
+        assert text in table

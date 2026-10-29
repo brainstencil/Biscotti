@@ -6,7 +6,7 @@ import Transcription
 @testable import LiveTranscriptionService
 
 @MainActor
-private struct LiveFixture {
+struct LiveFixture {
     let engines: FakeLiveEngineFactory
     let model: FakeLiveModel
     let power: FakePowerSource
@@ -482,7 +482,7 @@ struct LiveTranscriptionServiceSettingsTests {
 }
 
 /// True when each chunk starts where the one before it ended.
-private func isContiguous(_ chunks: [LiveAudioChunk]) -> Bool {
+func isContiguous(_ chunks: [LiveAudioChunk]) -> Bool {
     zip(chunks, chunks.dropFirst()).allSatisfy { abs($1.startTime - $0.endTime) < 1e-6 }
 }
 

@@ -39,15 +39,24 @@ Joined lines (subsystem `net.scosman.biscotti`):
 - `llm-broker`: "Model opened: …" (a model load) and "Closing model connection: <reason>".
 - `live`: "Live status: <status>", "A live decode has not returned …" (the
   stuck-decode watchdog ends the worker), "Restarting the live engine", "The
-  live engine failed again" (live transcription stops) and "Live latency,
-  whole session: …" (the session's counts, to check the capture is whole).
+  live engine failed again" (live transcription stops), "Live latency,
+  whole session: …" (the session's counts, to check the capture is whole),
+  "Live decoding held (<reason>)" and "Live decoding resumes after a <s> s
+  hold, <s> s behind" (a live hold), "Live session ended with <n> rows and
+  <n> gaps. <gaps>" (audio missing from the live text), "Live finish after
+  Stop: <result>", "Live settled text changed instead of growing" (a
+  rejected update) and the worker's "Live session started: …, update every
+  <s> s" (2 s in Low Power Mode).
 - `live.latency` (debug builds): `decode ms=<n>` per update,
   `chunks to=update|drawn s=<delays>` (each chunk's delay since it was taken,
   to the update that covered it or to the drawing that showed it), and
   `chunks dropped=<n> reason=<reason>` for chunks never measured.
 
 Answer windows run from the lease's start (or the ask, when the answer never
-got the model) to done. Memory is in GiB; "GB" in the budgets means GiB. The
+got the model) to done. A plan in mode `holdLiveTranscript` holds the live
+transcript's decoding for each answer, so no decode starts inside its window:
+the contention rule's decode limit then also covers the decodes that start in
+the 30 s after each answer's done, where the held audio is caught up. Memory is in GiB; "GB" in the budgets means GiB. The
 memory rule uses the footprints' sum plus the AI worker's resident pages
 beyond its footprint (`decision_memory`), during the recording only.
 """
@@ -80,6 +89,11 @@ CATCH_UP_GRACE_S = 10
 BUDGETS = (("8 GB", 3, "e2b"), ("16 GB", 11, "e2b"), ("24 GB", 19, "12b"))
 # A catch-up with no live status before its done.
 UNKNOWN = "unknown"
+# The plan mode that holds the live transcript while each answer is written.
+HELD_MODE = "holdLiveTranscript"
+# A held run's decode limit also covers decodes that start this soon after
+# done (and before the next window), where the held audio is caught up.
+AFTER_ANSWER_S = CATCH_UP_LIMIT_S
 
 PROCESSES = ("app", "transcriber", "llm")
 MEASURES = ("footprint", "resident")
@@ -87,6 +101,14 @@ STAGES = ("drawn", "update")
 KEY_VALUE = re.compile(r"(\w+)=(\S+)")
 SESSION_COUNT = re.compile(r"(chunk to update|worker decode) (?:none|p50 [^;]*\((\d+)\))")
 MODEL_OPENED = re.compile(r"Model opened: (.+) in \d+ ms")
+HOLD_STARTED = re.compile(r"Live decoding held \((.*)\)$")
+HOLD_RESUMED = re.compile(r"Live decoding resumes after a ([\d.]+|\?) s hold(?:, (-?[\d.]+) s behind)?(?: \((.*)\))?$")
+SESSION_ENDED = re.compile(r"Live session ended with (\d+) rows and (\d+) gaps\.(.*)$")
+GAP = re.compile(r"(\w+) ([\d.]+)\+([\d.]+) s (\w+)( silent)?")
+MORE_GAPS = re.compile(r"(\d+) more")
+SESSION_STARTED = re.compile(r"Live session started: \d+ track\(s\), update every ([\d.]+) s")
+FINISH = "Live finish after Stop: "
+REJECTED_UPDATE = "Live settled text changed instead of growing"
 
 
 class AnalysisError(Exception):
@@ -130,6 +152,18 @@ class Answer:
     def count(self, key: str) -> int | None:
         value = self.number(key)
         return None if value is None else int(value)
+
+
+@dataclass
+class Hold:
+    """A live hold's end: how long decoding was held, and how far behind the
+    live text was then."""
+
+    end: float
+    held_seconds: float | None
+    behind_seconds: float | None
+    # Why the service ended it, when not by its holder ("the recording stopped").
+    note: str | None = None
 
 
 # MARK: - Reading
@@ -218,6 +252,15 @@ class Run:
     model_closes: dict[str, int] = field(default_factory=dict)
     # When the stuck-decode watchdog ended the speech worker.
     watchdog_resets: list[float] = field(default_factory=list)
+    hold_starts: list[float] = field(default_factory=list)
+    holds: list[Hold] = field(default_factory=list)
+    # The live sessions' gaps, from their end lines: how many, and those listed.
+    gap_count: int = 0
+    gaps: list[dict] = field(default_factory=list)
+    finishes: list[str] = field(default_factory=list)
+    rejected_updates: int = 0
+    # The live engine's update interval, from the worker.
+    update_intervals: list[float] = field(default_factory=list)
     engine_restarts: int = 0
     engine_failures: int = 0
     # What the live sessions counted, from their "whole session" summaries.
@@ -277,6 +320,31 @@ def collect_live(run: Run, entry: Entry) -> None:
     elif message.startswith("Live latency, whole session: "):
         for figure, count in SESSION_COUNT.findall(message):
             run.session_counts[figure] = run.session_counts.get(figure, 0) + int(count or 0)
+    elif HOLD_STARTED.match(message):
+        run.hold_starts.append(entry.time)
+    elif match := HOLD_RESUMED.match(message):
+        held, behind, note = match.groups()
+        run.holds.append(Hold(end=entry.time, held_seconds=None if held == "?" else float(held),
+                              behind_seconds=None if behind is None else float(behind), note=note))
+    elif match := SESSION_ENDED.match(message):
+        collect_gaps(run, int(match.group(2)), match.group(3))
+    elif message.startswith(FINISH):
+        run.finishes.append(message.removeprefix(FINISH))
+    elif message.startswith(REJECTED_UPDATE):
+        run.rejected_updates += 1
+    elif match := SESSION_STARTED.match(message):
+        run.update_intervals.append(float(match.group(1)))
+
+
+def collect_gaps(run: Run, count: int, detail: str) -> None:
+    """A session's gaps: its count, and the first 20 its end line lists
+    (`track start+duration s reason[ silent]`), then "N more"."""
+    run.gap_count += count
+    for part in detail.split(";"):
+        if match := GAP.search(part):
+            track, start, duration, reason, silent = match.groups()
+            run.gaps.append({"track": track, "start": float(start), "duration": float(duration),
+                             "reason": reason, "silent": silent is not None})
 
 
 def collect_latency(run: Run, entry: Entry) -> None:
@@ -429,8 +497,9 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
     decodes = [(time - ms / 1000, time, ms) for time, ms in run.decodes if settled(time)]
     decodes_inside = [ms for start, end, ms in decodes if inside(start, end)]
     decodes_outside = [ms for start, end, ms in decodes if not inside(start, end)]
-
-    rows = [answer_row(answer, answers, run) for answer in answers]
+    held = plan.get("mode") == HELD_MODE
+    rows = [answer_row(answer, answers, run, decodes) for answer in answers]
+    decodes_after = [ms for answer in answers for ms in decodes_after_answer(answer, answers, decodes)]
     catch_ups = [row["catchUpSeconds"] for row in rows if row["done"]]
     # An unknown catch-up is not "never": it is left out of the median.
     known = [math.inf if value is None else value for value in catch_ups if value != UNKNOWN]
@@ -450,7 +519,11 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
     else:
         missing += [f"the catch-up after question {row['question']} is unknown: no live status came before its done"
                     for row in rows if row["catchUpSeconds"] == UNKNOWN]
-    if windows and not decodes_inside:
+    if held:
+        # No decode starts inside a held window: the rule needs the decodes after the answers.
+        if windows and not decodes_inside and not decodes_after:
+            missing.append("no live decode lines in or after the answer windows")
+    elif windows and not decodes_inside:
         missing.append("no live decode lines in the answer windows")
 
     return {
@@ -470,11 +543,20 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
         "memoryBudgets": memory_budgets(memory["decision"]["peakMiB"], run.model_files),
         "liveDelaySeconds": live_delay,
         "liveChunksDropped": run.dropped_chunks,
-        "longestDecodeMs": {"inside": longest_inside, "outside": max(decodes_outside, default=None)},
+        "longestDecodeMs": {
+            "inside": longest_inside, "outside": max(decodes_outside, default=None),
+            "afterAnswers": max(decodes_after, default=None),
+        },
         "watchdogResets": len(run.watchdog_resets),
         "watchdogResetTimes": [reset_time(time, answers, run) for time in run.watchdog_resets],
         "engineRestarts": run.engine_restarts,
         "engineFailures": run.engine_failures,
+        "heldRun": held,
+        "liveHolds": len(run.hold_starts),
+        "liveGaps": gap_summary(run),
+        "rejectedLiveUpdates": run.rejected_updates,
+        "liveFinish": run.finishes,
+        "liveUpdateIntervalSeconds": sorted(set(run.update_intervals)),
         "catchUpSeconds": {"median": "never" if catch_up_median == math.inf else catch_up_median, "perAnswer": catch_ups},
         "timeToFirstTokenSeconds": {
             "cold": [row["timeToFirstTokenSeconds"] for row in rows if row["cold"] and row["timeToFirstTokenSeconds"] is not None],
@@ -489,11 +571,49 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
             "files": run.model_files,
             "closes": run.model_closes,
         },
-        "warnings": warnings(run, answers, plan),
+        "warnings": warnings(run, answers, plan, run_name),
         "contention": contention(
             answers, resets=len(run.watchdog_resets), engine_failures=run.engine_failures,
             longest_decode_ms=longest_inside, catch_up_median=catch_up_median, missing=missing,
+            longest_after_ms=max(decodes_after, default=None) if held else None,
         ),
+    }
+
+
+def after_span(answer: Answer, answers: list[Answer]) -> tuple[float, float] | None:
+    """From the answer's done for `AFTER_ANSWER_S`, or until the next window
+    starts: where a held answer's audio is caught up."""
+    if answer.done is None:
+        return None
+    later = [other.window[0] for other in answers if other.window and other.window[0] > answer.done]
+    return answer.done, min([answer.done + AFTER_ANSWER_S, *later])
+
+
+def decodes_after_answer(answer: Answer, answers: list[Answer], decodes: list[tuple[float, float, float]]) -> list[float]:
+    """The durations (ms) of the decodes that start in the answer's `after_span`."""
+    span = after_span(answer, answers)
+    return [] if span is None else [ms for start, _, ms in decodes if span[0] <= start < span[1]]
+
+
+def answer_hold(answer: Answer, run: Run) -> Hold | None:
+    """The hold that ended while the answer ran: the chat service releases it
+    once the model is done, before the answer is saved and logged."""
+    end = answer.done if answer.done is not None else math.inf
+    return next((hold for hold in run.holds if answer.ask <= hold.end <= end), None)
+
+
+def gap_summary(run: Run) -> dict:
+    """The live sessions' gaps: audio missing from the live text (the saved
+    transcript still has it). Those with sound are what a reader lost."""
+    by_reason: dict[str, int] = {}
+    for gap in run.gaps:
+        by_reason[gap["reason"]] = by_reason.get(gap["reason"], 0) + 1
+    return {
+        "count": run.gap_count,
+        "withSound": sum(not gap["silent"] for gap in run.gaps),
+        "listed": len(run.gaps),
+        "byReason": by_reason,
+        "seconds": sum(gap["duration"] for gap in run.gaps),
     }
 
 
@@ -585,7 +705,7 @@ def model_loaded_during(answer: Answer, run: Run) -> bool:
     return any(answer.ask <= time <= end for time in run.model_opens)
 
 
-def answer_row(answer: Answer, answers: list[Answer], run: Run) -> dict:
+def answer_row(answer: Answer, answers: list[Answer], run: Run, decodes: list[tuple[float, float, float]] = ()) -> dict:
     first, done = answer.first_token, answer.done
     tokens = answer.count("tokens") or 0
     generated, generation_seconds = answer.count("generated"), answer.number("generationSeconds")
@@ -597,6 +717,7 @@ def answer_row(answer: Answer, answers: list[Answer], run: Run) -> dict:
         rate = None
     next_ask = min((other.ask for other in answers if done is not None and other.ask > done), default=math.inf)
     partial = answer.fields.get("partial", "-")
+    hold = answer_hold(answer, run)
     return {
         "question": answer.question,
         "outcome": answer.fields.get("outcome", "unfinished"),
@@ -614,10 +735,13 @@ def answer_row(answer: Answer, answers: list[Answer], run: Run) -> dict:
         "generatedTokens": generated,
         "cited": answer.count("cited"),
         "linked": answer.count("linked"),
+        "heldSeconds": None if hold is None else hold.held_seconds,
+        "behindSeconds": None if hold is None else hold.behind_seconds,
+        "longestDecodeAfterMs": max(decodes_after_answer(answer, answers, decodes), default=None),
     }
 
 
-def warnings(run: Run, answers: list[Answer], plan: dict[str, str]) -> list[str]:
+def warnings(run: Run, answers: list[Answer], plan: dict[str, str], run_name: str = "") -> list[str]:
     """Signs that the capture or the setup lost something the figures need."""
     found = incomplete(run, answers, plan)
     found += [f"the driver aborted the plan: {reason}" for reason in run.aborts]
@@ -638,6 +762,12 @@ def warnings(run: Run, answers: list[Answer], plan: dict[str, str]) -> list[str]
         if tag in plan_name and run.model_files and not any(tag in file.lower() for file in run.model_files):
             found.append(f"the plan is for {tag.upper()}, but the run loaded {', '.join(run.model_files)}: "
                          "select the plan's model")
+    if plan.get("mode") == HELD_MODE:
+        found += [f"question {answer.question} ran without a live hold: the plan holds the live transcript"
+                  for answer in answers if during_recording(answer.ask, run) and answer_hold(answer, run) is None]
+    if "lowpower" in run_name.lower() and run.update_intervals and min(run.update_intervals) < 2:
+        found.append("the run is named for Low Power Mode, but the live transcript updated every "
+                     f"{min(run.update_intervals):g} s (2 s in Low Power Mode): turn Low Power Mode on")
     for name, path in sorted(run.workers.items()):
         if path == "missing":
             found.append(f"the {name} worker was not found, so its memory is not in the sum")
@@ -668,11 +798,15 @@ def unread_workers(run: Run) -> list[str]:
 
 
 def contention(answers: list[Answer], *, resets: int = 0, engine_failures: int = 0, longest_decode_ms: float | None = None,
-               catch_up_median: float | None = None, missing: list[str] = ()) -> dict:
+               catch_up_median: float | None = None, missing: list[str] = (), longest_after_ms: float | None = None) -> dict:
     """The default (no pause) stands if there are no watchdog resets, no decode
     inside an answer takes 5 s, and the median catch-up is under 30 s. It
     fails if live transcription stopped, and is undetermined (None) when the
-    figures it needs are missing."""
+    figures it needs are missing.
+
+    For a held run, `longest_after_ms` is the longest decode in the 30 s
+    after the answers: the hold moves the answers' decode load there, so the
+    decode limit covers it too."""
     if not answers:
         return {"passes": None, "reasons": ["no answers"]}
     reasons = []
@@ -682,6 +816,8 @@ def contention(answers: list[Answer], *, resets: int = 0, engine_failures: int =
         reasons.append("live transcription stopped: the live engine failed twice")
     if longest_decode_ms is not None and longest_decode_ms >= DECODE_LIMIT_MS:
         reasons.append(f"a decode inside an answer took {longest_decode_ms / 1000:.1f} s")
+    if longest_after_ms is not None and longest_after_ms >= DECODE_LIMIT_MS:
+        reasons.append(f"a decode after an answer took {longest_after_ms / 1000:.1f} s")
     if catch_up_median is not None and catch_up_median >= CATCH_UP_LIMIT_S:
         reasons.append("the median catch-up is 30 s or more" if catch_up_median != math.inf else "the live transcript never caught up after most answers")
     if reasons:
@@ -720,6 +856,25 @@ def delay_text(stats: dict) -> str:
     if not stats["count"]:
         return "no chunks"
     return f"median {seconds(stats['median'])}, p95 {seconds(stats['p95'])} ({plural(stats['count'], 'chunk')})"
+
+
+def hold_text(rows: list[dict]) -> str:
+    """Each held answer's hold: how long, and how far behind the live text was at its end."""
+    parts = []
+    for row in rows:
+        if row["heldSeconds"] is None and row["behindSeconds"] is None:
+            continue
+        behind = "" if row["behindSeconds"] is None else f", {row['behindSeconds']:.1f} s behind at its end"
+        parts.append(f"q{row['question']} {seconds(row['heldSeconds'])}{behind}")
+    return "; ".join(parts) or "none"
+
+
+def gaps_text(gaps: dict) -> str:
+    if not gaps["count"]:
+        return "none"
+    reasons = ", ".join(f"{reason} {count}" for reason, count in sorted(gaps["byReason"].items()))
+    listed = "" if gaps["listed"] == gaps["count"] else f"; {gaps['listed']} listed"
+    return f"{gaps['count']} ({gaps['withSound']} with sound, {gaps['seconds']:.1f} s{listed}): {reasons}"
 
 
 def memory_rows(memory: dict, after_stop: dict) -> list[tuple[str, str]]:
@@ -778,16 +933,26 @@ def markdown(result: dict) -> str:
         ("Live chunks not measured", dropped),
         ("Longest live decode inside answers", seconds(None if decode["inside"] is None else decode["inside"] / 1000, 2)),
         ("Longest live decode outside answers", seconds(None if decode["outside"] is None else decode["outside"] / 1000, 2)),
+        ("Longest live decode in the 30 s after answers",
+         seconds(None if decode["afterAnswers"] is None else decode["afterAnswers"] / 1000, 2)),
         ("Watchdog resets", str(result["watchdogResets"])
          + (f" ({'; '.join(result['watchdogResetTimes'])})" if result["watchdogResetTimes"] else "")),
         ("Live engine restarts / failures", f"{result['engineRestarts']} / {result['engineFailures']}"),
         ("Catch-up after answers", f"median {seconds(result['catchUpSeconds']['median'])}; per answer (s): {catch_ups or '–'}"),
+        *([("Live hold per answer", hold_text(result["answers"]))] if result["heldRun"] or result["liveHolds"] else []),
+        ("Live gaps (audio missing from the live text)", gaps_text(result["liveGaps"])),
+        ("Rejected live updates (settled text changed)", str(result["rejectedLiveUpdates"])),
+        ("Live finish after Stop", ", ".join(result["liveFinish"]) or "–"),
+        ("Live update interval", ", ".join(f"{value:g} s" for value in result["liveUpdateIntervalSeconds"]) or "–"),
         ("Time to first token, cold", ", ".join(seconds(value) for value in first_token["cold"]) or "–"),
         ("Time to first token, warm", f"median {seconds(median(first_token['warm']))} ({plural(len(first_token['warm']), 'answer')})"),
         ("Tokens per second", "–" if result["tokensPerSecond"]["median"] is None else f"median {result['tokensPerSecond']['median']:.1f}"),
         ("Citation validity", f"{citations['linked']} of {citations['cited']}" + ("" if validity is None else f" ({validity:.0%})")),
         ("Failed / partial answers", f"{result['outcomes']['failed']} failed, {result['outcomes']['partial']} partial"),
         ("Warnings", "; ".join(result["warnings"]) or "none"),
+        *([("Contention rule for a held run", "no decode starts inside a held answer, so the 5 s limit covers the decodes "
+            "inside answers (one already running when the hold began) and those in the 30 s after them")]
+          if result["heldRun"] else []),
         ("Contention rule", verdict),
     ]
     lines = [f"### {result['run']}", "", "| Measure | Value |", "|---|---|"]

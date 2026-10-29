@@ -388,6 +388,14 @@ public final class AppCore {
     /// `.task` modifier) while the same AppCore instance persists.
     private var hasLaunched = false
 
+    #if DEBUG
+        /// Whether `onLaunch()` has returned, and the callers of
+        /// `waitUntilLaunched()` until then. Debug builds only: the chat
+        /// load driver (`chatLoadControls`).
+        @ObservationIgnored private var hasFinishedLaunch = false
+        @ObservationIgnored private var launchWaiters: [CheckedContinuation<Void, Never>] = []
+    #endif
+
     private let logger = Logger(subsystem: "net.scosman.biscotti", category: "AppCore")
     private let detectionLogger = Logger(subsystem: "net.scosman.biscotti", category: "Detection")
 
@@ -448,6 +456,9 @@ public final class AppCore {
             return
         }
         hasLaunched = true
+        #if DEBUG
+            defer { finishLaunchWait() }
+        #endif
         logger.info("onLaunch: enter")
 
         logger.info("onLaunch: recoverOrphans starting")
@@ -631,12 +642,23 @@ public final class AppCore {
         return meetingID
     }
 
-    // MARK: - Navigation
+    // MARK: - Permission refresh
 
+    // (refreshAllPermissions lives in an extension below to keep the class
+    // body within the type_body_length lint limit.)
+}
+
+// MARK: - Navigation
+
+// Extracted to an extension to keep the main class body within the
+// type_body_length lint limit after adding the debug launch wait's stored
+// properties (which must live in the class body for @Observable).
+
+public extension AppCore {
     /// Opens a specific meeting from OUTSIDE the list (menu bar, Home recent,
     /// stopRecording, "open this meeting"). Clears any active search, sets
     /// a single-element selection, and routes to the Meetings screen.
-    public func select(_ meetingID: UUID) {
+    func select(_ meetingID: UUID) {
         cancelMeetingsSearch()
         meetingsQuery = ""
         meetingsResults = []
@@ -647,13 +669,13 @@ public final class AppCore {
     /// Set selection from WITHIN the list (`List(selection:)` setter).
     /// Preserves the current mode (keeps the query if searching).
     /// Empty set = placeholder (no selection).
-    public func selectFromList(_ ids: Set<UUID>) {
+    func selectFromList(_ ids: Set<UUID>) {
         meetingsSelection = ids
     }
 
     /// "Past Meetings" (sidebar) and "See all" (Home): browse mode,
     /// KEEP selection (D4).
-    public func showMeetings() {
+    func showMeetings() {
         cancelMeetingsSearch()
         meetingsQuery = ""
         meetingsResults = []
@@ -661,15 +683,10 @@ public final class AppCore {
     }
 
     /// Routes to the recording screen (sidebar recording indicator tap).
-    public func navigateToRecording() {
+    func navigateToRecording() {
         guard recording.state.isRecording else { return }
         route = .recording
     }
-
-    // MARK: - Permission refresh
-
-    // (refreshAllPermissions lives in an extension below to keep the class
-    // body within the type_body_length lint limit.)
 }
 
 // MARK: - Recording shortcuts
@@ -695,6 +712,26 @@ public extension AppCore {
         await startRecording(eventKey: eventKey)
     }
 }
+
+// MARK: - Launch wait (debug builds)
+
+#if DEBUG
+    extension AppCore {
+        /// Returns once `onLaunch()` has: the stored settings are applied and
+        /// the model selection resolved. Debug builds only: the chat load
+        /// driver waits for it (`chatLoadControls`).
+        func waitUntilLaunched() async {
+            guard !hasFinishedLaunch else { return }
+            await withCheckedContinuation { launchWaiters.append($0) }
+        }
+
+        fileprivate func finishLaunchWait() {
+            hasFinishedLaunch = true
+            launchWaiters.forEach { $0.resume() }
+            launchWaiters = []
+        }
+    }
+#endif
 
 // MARK: - Onboarding
 

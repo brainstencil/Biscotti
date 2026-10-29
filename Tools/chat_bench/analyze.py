@@ -9,7 +9,7 @@ Biscotti Dev runs a plan from `plans/` when it starts with the launch argument
 This script joins the driver's `chat-load` lines with the live transcript's
 and the LLM broker's log lines, and writes `results/<RUN>.json` and
 `results/<RUN>.md` (one Markdown table, also printed). README.md has the whole
-procedure.
+procedure; `run.sh RUN PLAN` runs it with nobody at the Mac, this script included.
 
 Capture (no sudo). Quit every copy of Biscotti Dev, start the capture, wait
 two seconds, then start the app. Stop the capture with Ctrl-C after the driver
@@ -35,7 +35,7 @@ This saves the `log show` output as `results/<RUN>.ndjson` first.
 
 Joined lines (subsystem `net.scosman.biscotti`):
 - `chat-load`: the driver's plan, worker, recording, ask, skip, lease,
-  first-token, done and memory lines (MiB).
+  first-token, done, abort and memory lines (MiB).
 - `llm-broker`: "Model opened: …" (a model load) and "Closing model connection: <reason>".
 - `live`: "Live status: <status>", "A live decode has not returned …" (the
   stuck-decode watchdog ends the worker), "Restarting the live engine", "The
@@ -216,7 +216,8 @@ class Run:
     decodes: list[tuple[float, float]] = field(default_factory=list)
     model_opens: list[float] = field(default_factory=list)
     model_closes: dict[str, int] = field(default_factory=dict)
-    watchdog_resets: int = 0
+    # When the stuck-decode watchdog ended the speech worker.
+    watchdog_resets: list[float] = field(default_factory=list)
     engine_restarts: int = 0
     engine_failures: int = 0
     # What the live sessions counted, from their "whole session" summaries.
@@ -225,6 +226,10 @@ class Run:
     dropped_chunks: dict[str, int] = field(default_factory=dict)
     model_files: list[str] = field(default_factory=list)
     plan_done: bool = False
+    # The driver's `abort reason=` lines: the plan could not run.
+    aborts: list[str] = field(default_factory=list)
+    # When answers the driver did not ask (`q=-`, asked in the app) ended.
+    other_answers: list[float] = field(default_factory=list)
     # The main app's processes (not its XPC workers) that wrote lines.
     app_pids: set[int] = field(default_factory=set)
     losses: int = 0
@@ -264,7 +269,7 @@ def collect_live(run: Run, entry: Entry) -> None:
     if message.startswith("Live status: "):
         run.statuses.append((entry.time, message.removeprefix("Live status: ")))
     elif message.startswith("A live decode has not returned"):
-        run.watchdog_resets += 1
+        run.watchdog_resets.append(entry.time)
     elif message.startswith("Restarting the live engine"):
         run.engine_restarts += 1
     elif message.startswith("The live engine failed again"):
@@ -295,6 +300,8 @@ def collect_chat_load(run: Run, entry: Entry) -> None:
             run.plans.append(fields)
         case "plan-done":
             run.plan_done = True
+        case "abort":
+            run.aborts.append(fields.get("reason", "?"))
         case "recording-started" if run.recording_started is None:
             run.recording_started = entry.time
         case "recording-stopped" if run.recording_started is not None and run.recording_stopped is None:
@@ -321,6 +328,8 @@ def collect_chat_load(run: Run, entry: Entry) -> None:
             answer.done = entry.time
             answer.fields = fields
             answer.error = tail
+        case "done" if question is None:
+            run.other_answers.append(entry.time)
 
 
 # MARK: - Measures
@@ -434,6 +443,8 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
     linked = sum(answer.count("linked") or 0 for answer in answers)
     longest_inside = max(decodes_inside, default=None)
     missing = incomplete(run, answers, plan)
+    # The driver never presses the chat's Stop, so an answer that did not complete is a fault in the run.
+    missing += [outcome_reason(row) for row in rows if row["done"] and row["outcome"] != "complete"]
     if not run.statuses:
         missing.append("no live status lines in the range")
     else:
@@ -460,7 +471,8 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
         "liveDelaySeconds": live_delay,
         "liveChunksDropped": run.dropped_chunks,
         "longestDecodeMs": {"inside": longest_inside, "outside": max(decodes_outside, default=None)},
-        "watchdogResets": run.watchdog_resets,
+        "watchdogResets": len(run.watchdog_resets),
+        "watchdogResetTimes": [reset_time(time, answers, run) for time in run.watchdog_resets],
         "engineRestarts": run.engine_restarts,
         "engineFailures": run.engine_failures,
         "catchUpSeconds": {"median": "never" if catch_up_median == math.inf else catch_up_median, "perAnswer": catch_ups},
@@ -479,7 +491,7 @@ def analyze(entries: list[Entry], run_name: str) -> dict:
         },
         "warnings": warnings(run, answers, plan),
         "contention": contention(
-            answers, resets=run.watchdog_resets, engine_failures=run.engine_failures,
+            answers, resets=len(run.watchdog_resets), engine_failures=run.engine_failures,
             longest_decode_ms=longest_inside, catch_up_median=catch_up_median, missing=missing,
         ),
     }
@@ -495,6 +507,47 @@ def during_recording(time: float, run: Run) -> bool:
 
 def after_stop_time(time: float, run: Run) -> bool:
     return run.recording_stopped is not None and time > run.recording_stopped
+
+
+def outcome_reason(row: dict) -> str:
+    """Why an answer that did not complete makes the verdict undetermined."""
+    reason = f"question {row['question']} {row['outcome']}"
+    return f"{reason} ({row['error']})" if row["error"] else reason
+
+
+def clock_time(seconds_: float) -> str:
+    sign, seconds_ = ("-", -seconds_) if seconds_ < 0 else ("", seconds_)
+    minutes, rest = divmod(round(seconds_), 60)
+    return f"{sign}{minutes}:{rest:02d}"
+
+
+def reset_time(time: float, answers: list[Answer], run: Run) -> str:
+    """When a watchdog reset came: the time since the recording started (the
+    clock time without one), how long after Stop, and where it fell against
+    the nearest answer window. The watchdog acts when a live session ends, so
+    a reset at Stop is not an answer's doing."""
+    if run.recording_started is not None:
+        parts = [f"at {clock_time(time - run.recording_started)}"]
+    else:
+        parts = [f"at {datetime.fromtimestamp(time).strftime('%H:%M:%S')}"]
+    if after_stop_time(time, run):
+        parts.append(f"{time - run.recording_stopped:.0f} s after Stop")
+    nearest = None
+    for answer in answers:
+        if answer.window is None:
+            continue
+        start, end = answer.window
+        if start <= time <= end:
+            nearest = (0.0, f"inside q{answer.question}'s answer")
+            break
+        before, after = start - time, time - end
+        distance, text = (before, f"{before:.0f} s before q{answer.question}'s {'lease' if answer.lease is not None else 'ask'}") \
+            if before > 0 else (after, f"{after:.0f} s after q{answer.question}'s done")
+        if nearest is None or distance < nearest[0]:
+            nearest = (distance, text)
+    if nearest:
+        parts.append(nearest[1])
+    return ", ".join(parts)
 
 
 def incomplete(run: Run, answers: list[Answer], plan: dict[str, str]) -> list[str]:
@@ -567,6 +620,10 @@ def answer_row(answer: Answer, answers: list[Answer], run: Run) -> dict:
 def warnings(run: Run, answers: list[Answer], plan: dict[str, str]) -> list[str]:
     """Signs that the capture or the setup lost something the figures need."""
     found = incomplete(run, answers, plan)
+    found += [f"the driver aborted the plan: {reason}" for reason in run.aborts]
+    if run.other_answers:
+        found.append(f"{plural(len(run.other_answers), 'answer')} not asked by the driver (someone asked in the app): "
+                     "their load falls outside the answer windows")
     if run.recording_started is None:
         found.append("no recording-started line: the memory figures and model loads cover the whole capture")
     found += unread_workers(run)
@@ -576,6 +633,11 @@ def warnings(run: Run, answers: list[Answer], plan: dict[str, str]) -> list[str]
         if answer.loading and not model_loaded_during(answer, run):
             found.append(f"question {answer.question} loaded the model, but no 'Model opened' line is in the range: "
                          "info lines are missing, so the model-load count is wrong")
+    plan_name = plan.get("name", "").lower()
+    for tag in ("e2b", "12b"):
+        if tag in plan_name and run.model_files and not any(tag in file.lower() for file in run.model_files):
+            found.append(f"the plan is for {tag.upper()}, but the run loaded {', '.join(run.model_files)}: "
+                         "select the plan's model")
     for name, path in sorted(run.workers.items()):
         if path == "missing":
             found.append(f"the {name} worker was not found, so its memory is not in the sum")
@@ -716,7 +778,8 @@ def markdown(result: dict) -> str:
         ("Live chunks not measured", dropped),
         ("Longest live decode inside answers", seconds(None if decode["inside"] is None else decode["inside"] / 1000, 2)),
         ("Longest live decode outside answers", seconds(None if decode["outside"] is None else decode["outside"] / 1000, 2)),
-        ("Watchdog resets", str(result["watchdogResets"])),
+        ("Watchdog resets", str(result["watchdogResets"])
+         + (f" ({'; '.join(result['watchdogResetTimes'])})" if result["watchdogResetTimes"] else "")),
         ("Live engine restarts / failures", f"{result['engineRestarts']} / {result['engineFailures']}"),
         ("Catch-up after answers", f"median {seconds(result['catchUpSeconds']['median'])}; per answer (s): {catch_ups or '–'}"),
         ("Time to first token, cold", ", ".join(seconds(value) for value in first_token["cold"]) or "–"),

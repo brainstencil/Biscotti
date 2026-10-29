@@ -1,6 +1,11 @@
 {
   "name": "concurrent-e2b",
   "mode": "concurrent",
+  "model": "gemma-4-e2b",
+  "record": {
+    "startAfterSeconds": 10,
+    "durationSeconds": 900
+  },
   "closeModelAfterAnswer": true,
   "startAfter": "recordingStart",
   "startDelaySeconds": 120,

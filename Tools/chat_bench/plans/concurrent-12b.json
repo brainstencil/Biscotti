@@ -1,6 +1,11 @@
 {
   "name": "concurrent-12b",
   "mode": "concurrent",
+  "model": "gemma-4-12b",
+  "record": {
+    "startAfterSeconds": 10,
+    "durationSeconds": 900
+  },
   "closeModelAfterAnswer": false,
   "startAfter": "recordingStart",
   "startDelaySeconds": 120,

@@ -1,6 +1,11 @@
 {
   "name": "after-stop",
   "mode": "concurrent",
+  "model": "gemma-4-e2b",
+  "record": {
+    "startAfterSeconds": 10,
+    "durationSeconds": 900
+  },
   "startAfter": "recordingStop",
   "startDelaySeconds": 0,
   "intervalSeconds": 0,

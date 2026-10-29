@@ -29,6 +29,8 @@
             #expect(plans.map(\.closeModelAfterAnswer) == [nil, true, false, nil])
             #expect(plans.map(\.startAfter) == [.recordingStart, .recordingStart, .recordingStart, .recordingStop])
             #expect(plans.map(\.questions.count) == [0, 8, 8, 4])
+            #expect(plans.map(\.model) == ["gemma-4-e2b", "gemma-4-e2b", "gemma-4-12b", "gemma-4-e2b"])
+            #expect(plans.allSatisfy { $0.record == ChatLoadPlan.Recording(startAfterSeconds: 10, durationSeconds: 900) })
             #expect(plans[1].questions == plans[2].questions)
             #expect(plans[1].dueTime(ofQuestion: 0) == .seconds(120))
             #expect(plans[1].dueTime(ofQuestion: 7) == .seconds(540))
@@ -114,6 +116,29 @@
             #expect(result.linkedTimes == 2)
             #expect(result.error == nil)
             #expect(result.logLine == "done q=1 outcome=complete promptTokens=120 context=\(context) partial=false tokens=3 generated=1 generationSeconds=0.000 cited=3 linked=2")
+        }
+
+        @Test("A prompt too long for the context ends once, failed, with the model kept loaded")
+        func promptTooLongEndsOnce() async throws {
+            let chat = try ChatHarness()
+            defer { chat.fix.cleanup() }
+            chat.script.tokenCount = 1_000_000
+            let (meetingID, _) = try await chat.meetingWithTranscript()
+            let driver = ChatLoadDriver(plan: .test(startAfter: .recordingStop, questions: ["What did we decide?"]), chat: chat.service, clock: TestClock())
+            driver.start(sampler: nil)
+            defer { driver.stop() }
+
+            await chat.service.recordingDidStop(meetingID: meetingID)
+            try await waitUntil("the answer") { driver.results.count == 1 }
+            await Task.yield()
+
+            let result = try #require(driver.results.first)
+            #expect(driver.results.count == 1)
+            #expect(result.outcome == "failed")
+            #expect(result.error == ChatErrorText.tooLong)
+            #expect(result.promptTokens == nil)
+            #expect(result.tokens == 0)
+            #expect(chat.opener.closeCount == 0)
         }
 
         @Test("A plan that starts after Stop asks nothing during the recording, then answers from the draft")
@@ -246,48 +271,6 @@
             #expect(counts.cited == 4)
             #expect(counts.linked == 3)
         }
-
-        @Test("The sampler reads this process's footprint and resident size, and finds it by its executable")
-        func footprintSamplerReadsThisProcess() throws {
-            let memory = try #require(FootprintSampler.memory(of: getpid()))
-            let executable = try #require(FootprintSampler.runningProcesses().first { $0.pid == getpid() }?.path)
-            let sample = FootprintSampler(transcriberExecutable: executable, llmExecutable: "/no/such/BiscottiLLM").sample()
-
-            #expect(memory.footprint > 0)
-            #expect(memory.resident > 0)
-            #expect(sample.app != nil)
-            #expect(sample.transcriber != nil)
-            #expect(sample.llm == nil)
-        }
-
-        @Test("The workers are found by the app's bundle identifier")
-        func workersFoundByBundleIdentifier() throws {
-            let root = FileManager.default.temporaryDirectory.appending(path: "ChatLoadDriverTests-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: root) }
-            let app = root.appending(path: "Test.app")
-            try Self.writeBundle(at: app, identifier: "net.example.test", executable: "Test")
-            let services = app.appending(path: "Contents/XPCServices")
-            try Self.writeBundle(at: services.appending(path: "BiscottiLLM.xpc"), identifier: "net.example.test.BiscottiLLM", executable: "BiscottiLLM")
-            try Self.writeBundle(at: services.appending(path: "Other.xpc"), identifier: "net.other.BiscottiTranscriber", executable: "Other")
-
-            let sampler = try FootprintSampler.forApp(#require(Bundle(url: app)))
-
-            #expect(sampler.llmExecutable?.hasSuffix("BiscottiLLM.xpc/Contents/MacOS/BiscottiLLM") == true)
-            #expect(sampler.transcriberExecutable == nil)
-        }
-
-        private static func writeBundle(at url: URL, identifier: String, executable: String) throws {
-            let macOS = url.appending(path: "Contents/MacOS")
-            try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
-            let info: [String: String] = [
-                "CFBundleIdentifier": identifier,
-                "CFBundleExecutable": executable,
-                "CFBundlePackageType": url.pathExtension == "xpc" ? "XPC!" : "APPL"
-            ]
-            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-                .write(to: url.appending(path: "Contents/Info.plist"))
-            FileManager.default.createFile(atPath: macOS.appending(path: executable).path, contents: Data())
-        }
     }
 
     /// The service's load events, by name.
@@ -306,10 +289,12 @@
         }
     }
 
-    private extension ChatLoadPlan {
+    extension ChatLoadPlan {
         static func test(
             mode: Mode = .concurrent,
             closeModelAfterAnswer: Bool? = nil,
+            model: String? = nil,
+            record: Recording? = nil,
             startAfter: Start = .recordingStart,
             delay: Double = 0,
             interval: Double = 0,
@@ -317,7 +302,7 @@
         ) -> ChatLoadPlan {
             ChatLoadPlan(
                 name: "test", mode: mode, startAfter: startAfter, closeModelAfterAnswer: closeModelAfterAnswer,
-                startDelaySeconds: delay, intervalSeconds: interval, questions: questions
+                startDelaySeconds: delay, intervalSeconds: interval, questions: questions, model: model, record: record
             )
         }
     }

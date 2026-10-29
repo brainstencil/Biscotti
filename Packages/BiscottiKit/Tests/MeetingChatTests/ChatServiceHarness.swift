@@ -37,11 +37,12 @@ struct ChatHarness {
     init(
         policy: ChatResourcePolicy = ChatResourcePolicy(physicalMemory: 32 << 30),
         clock: any Clock<Duration> = ContinuousClock(),
-        liveEnabled: Bool = true
+        liveEnabled: Bool = true,
+        liveModelPresent: Bool = true
     ) throws {
         let fix = try makeCoreFixture(testName: "MeetingChatTests")
         let world = ChatWorld()
-        let live = makeFakeLiveService(engines: engines, isEnabled: liveEnabled)
+        let live = makeFakeLiveService(engines: engines, model: FakeLiveModel(present: liveModelPresent), isEnabled: liveEnabled)
         let chatStore = TestChatStore(fix.store)
         self.fix = fix
         self.world = world

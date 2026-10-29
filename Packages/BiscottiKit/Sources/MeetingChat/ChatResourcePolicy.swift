@@ -14,8 +14,18 @@ public struct ChatResourcePolicy: Sendable, Equatable {
 
     public var physicalMemory: UInt64
     /// Macs with this much memory or less answer only after a recording
-    /// stops. Set by the measurement phase (see research/chat_measurement);
-    /// until then, no Mac waits.
+    /// stops.
+    ///
+    /// 8 GB is a proposal that waits for the user's review, and it departs
+    /// from the measurement's decision rule
+    /// (specs/projects/meeting_chat/research/chat_measurement). The rule
+    /// keeps chat during recordings on a tier whose measured peak fits its
+    /// budget, and Gemma 4 E2B with the live transcript peaked at 2.96 GB
+    /// against an 8 GB Mac's 3 GB. The proposal makes 8 GB Macs wait anyway:
+    /// the 0.04 GB margin is smaller than the figure's known error, which
+    /// leaves out the live model's Neural Engine memory (about 0.2 to 0.3 GB)
+    /// and samples once a second; and 8 GB Macs start with the live
+    /// transcript off, so waiting costs them little.
     public var waitForStopMaximumMemory: UInt64
     /// During a recording, Macs with less memory than this close the model
     /// after each answer, to free its memory for the rest of the meeting.
@@ -25,7 +35,7 @@ public struct ChatResourcePolicy: Sendable, Equatable {
 
     public init(
         physicalMemory: UInt64,
-        waitForStopMaximumMemory: UInt64 = 0,
+        waitForStopMaximumMemory: UInt64 = 8 << 30,
         closeAfterAnswerBelowMemory: UInt64 = 24 << 30,
         idleKeepAlive: Duration = .seconds(180)
     ) {

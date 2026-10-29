@@ -6,16 +6,43 @@ Tools for the meeting chat measurement (`specs/projects/meeting_chat/components/
   - `baseline` asks nothing.
   - `concurrent-e2b` and `concurrent-12b` ask the same 8 questions, every 60 s from minute 2 of the recording. They differ in what happens to the AI model after each answer (see [Plans and models](#plans-and-models)).
   - `after-stop` asks 4 questions right after Stop.
+- `run.sh`: runs one measurement with nobody at the Mac, from the app's start to the analysis.
 - `analyze.py`: reads a capture of the unified log and writes `results/<run>.json` and `results/<run>.md`.
 - `test_analyze.py`, `testdata/`: the analysis tests.
 
 The load driver is in the app: `Packages/BiscottiKit/Sources/MeetingChat/Debug/ChatLoadDriver.swift`. It exists only in debug builds, and it runs only when the app starts with `-chatLoadTest <plan>`.
 
-## Run one measurement
+## Run one measurement with `run.sh`
 
-No step needs sudo. Run `log`, `open` and `pgrep` outside the agent sandbox: `log` does not run inside it.
+Build Biscotti Dev from this branch with `make build-development`. The AI models the plans name must be downloaded; the plan selects its model. When another branch also builds Biscotti Dev, build into a folder of your own, so that the other build cannot replace it. `run.sh` runs the app in the same folder (`BISCOTTI_DEV_APP` overrides the app's path):
 
-1. Build Biscotti Dev from this branch with `Tools/development.sh build`. Make sure the AI model for the run is downloaded and selected in Settings.
+```sh
+export BISCOTTI_DEV_DERIVED_DATA=/Volumes/Data/projects/Developer/biscotti/DerivedData/Development-meeting-chat
+make build-development
+```
+
+A new build has a new ad-hoc signature, so macOS asks again for the microphone and system-audio permissions at its first recording. Then:
+
+```sh
+Tools/chat_bench/run.sh concurrent-e2b concurrent-e2b
+```
+
+The first argument names the result files; the second is a plan's name in `plans/` or a path to a plan. The script refuses a name whose capture (`results/RUN.ndjson`) already exists: move the old capture first. A run takes about 17 minutes (`after-stop` a few more). The script does steps 2 to 10 below:
+
+- It stops if production Biscotti runs: it never quits it. It quits Biscotti Dev and waits until no process of its bundle runs.
+- It starts the capture into `results/RUN.ndjson`, waits 2 s, and starts Biscotti Dev with the plan's absolute path.
+- The app's launch counts as done once no speech model has been prepared for 3 s. A new build, or a Core ML cache that macOS purged under low disk space, compiles the speech models for minutes first; a recording started meanwhile would hold its live transcript until the live model's compile ends, which is not what a user who opens the app ahead of a meeting sees. The driver then selects the plan's model, writes its `plan` line, and starts the recording itself 10 s later (the plan's `record`). The script waits up to 20 minutes for the `plan` line.
+- Once the capture holds `recording-started`, the script plays `soak/mixed.wav` with `afplay`, at the current volume and output device. If no recording starts within 90 s of the `plan` line, it stops: a permission prompt may be waiting, and the script answers none.
+- The app stops the recording after 15 minutes and writes `plan-done` once the recording has stopped and the plan's questions are answered. The script waits one more minute, stops the playback and the capture, quits Biscotti Dev, and runs `analyze.py`.
+- It stops early, with exit status 2, when the driver writes an `abort` line, the app's driver cannot record (its `plan` line has no `record=`: an older build), Biscotti Dev quits, production Biscotti starts, or `plan-done` has not come 35 minutes after the `plan` line. Exit status 1 means it could not start, and 3 that the analysis failed.
+
+Nobody opens the live transcript drawer in such a run, so the "to drawn" live delay may have no chunks (see step 5). Run the script outside the agent sandbox, because `log` does not run inside it. No step needs sudo.
+
+## Run one measurement by hand
+
+No step needs sudo. Run `log`, `open` and `pgrep` outside the agent sandbox: `log` does not run inside it. With a plan that has a `record` block (all four plans have one), the app starts and stops the recording itself: skip the recording in steps 5 and 7.
+
+1. Build Biscotti Dev from this branch with `Tools/development.sh build`. Make sure the AI model for the run is downloaded. A plan with a `model` selects it; otherwise select it in Settings.
 2. Quit Biscotti Dev, and Biscotti if it runs. Make sure that this command prints nothing:
 
    ```sh
@@ -40,6 +67,8 @@ No step needs sudo. Run `log`, `open` and `pgrep` outside the agent sandbox: `lo
      --args -chatLoadTest "$PWD/Tools/chat_bench/plans/concurrent-e2b.json"
    ```
 
+   If you built with `BISCOTTI_DEV_DERIVED_DATA`, use `$BISCOTTI_DEV_DERIVED_DATA/Build/Products/Debug/Biscotti Dev.app` instead.
+
 5. Start a recording and open the live transcript drawer. Each question the driver asks opens the chat card in the drawer's place, so the "to drawn" live delay is measured only while the drawer shows: before the first question, or after the drawer is reopened. The contention rule does not use it, and the "to update" delay is measured throughout.
 6. Play the live-bench soak fixture (`soak/mixed.wav`) through the speakers from its start.
 7. Stop the recording after 15 minutes. For `after-stop`, the questions start at Stop.
@@ -51,11 +80,26 @@ No step needs sudo. Run `log`, `open` and `pgrep` outside the agent sandbox: `lo
     uv run Tools/chat_bench/analyze.py RUN --log Tools/chat_bench/results/RUN.ndjson
     ```
 
+## Plan fields
+
+| Field | Meaning |
+|---|---|
+| `name` | The plan's name, in the `plan` line. `analyze.py` warns when a name with `e2b` or `12b` loaded no model file with that tag. |
+| `mode` | `concurrent` or `waitForStop`, forced on the resource policy for the run. |
+| `model` | Optional. The catalog model to select, as Settings does (`gemma-4-e2b`, `gemma-4-12b`). It changes the development data's model setting. If the model is not downloaded, the plan aborts. |
+| `record` | Optional. `startAfterSeconds`: from the end of the app's launch (and of its speech models' preparation) to Record. `durationSeconds`: from the recording's start to Stop. The app records through the Record and Stop buttons' paths. The plan aborts if the live transcript is off or its model is missing, or if no recording starts. |
+| `closeModelAfterAnswer` | Optional. Forces whether the model closes after each answer during a recording. |
+| `startAfter` | `recordingStart` or `recordingStop`: the event that starts the questions' clock. |
+| `startDelaySeconds`, `intervalSeconds` | When the first question is due after that event, and the time between two questions' due times. |
+| `questions` | The questions, asked one at a time. |
+
+The driver writes its `plan` line once the app's launch is done, with the active model's file (`model=`), the recording (`record=` start delay+duration) and whether a recording gets a live transcript (`live=on`). A plan that cannot run writes `abort reason=` (`modelNotSelected`, `liveTranscriptOff`, `liveModelMissing`, `recordingDidNotStart`, `noAppControls`) and no `plan-done`.
+
 ## Plans and models
 
 The memory and contention figures must show what the Macs that use each model do. Below 24 GB the app recommends Gemma 4 E2B, and those Macs close the AI model after each answer during a recording. From 24 GB the app recommends Gemma 4 12B, and those Macs keep the model loaded between answers. This Mac (64 GB) would keep it loaded, so the E2B plan forces the close (`"closeModelAfterAnswer": true`).
 
-| Run | Plan | Model selected in Settings |
+| Run | Plan | Model (the plan's `model`) |
 |---|---|---|
 | Baseline | `baseline.json` | Gemma 4 E2B |
 | Concurrent, E2B | `concurrent-e2b.json` | Gemma 4 E2B |
@@ -101,7 +145,8 @@ The result is "passes", "fails" or "undetermined". Do not take an undetermined r
 - a question with no `done` line (the app quit, or the capture ended early);
 - no live status lines in the capture;
 - no decode lines inside the answer windows;
-- an answer with no live status before its `done`, so its catch-up is unknown.
+- an answer with no live status before its `done`, so its catch-up is unknown;
+- an answer that ended stopped or failed: "question 4 failed (<error>)". The driver never presses the chat's Stop, so such an answer is a fault in the run.
 
 Two plans are normally undetermined, and that is not a capture fault:
 
@@ -112,14 +157,21 @@ Two plans are normally undetermined, and that is not a capture fault:
 
 The table and the standard error output list problems with the capture. Each one means that some figures may be wrong or missing. Examples:
 
-- the reasons above that make the rule undetermined;
+- the first three reasons above that make the rule undetermined (the run ended early); the others show only in the contention row;
 - no `recording-started` line, so the memory figures cover the whole capture;
+- an `abort` line: the plan could not run;
+- a plan whose name says `e2b` or `12b` while the run loaded another model;
+- answers the driver did not ask: someone used the chat in the app during the run;
 - lines from more than one Biscotti Dev process;
 - a missing worker, or a worker whose memory was never read while it had to run;
 - a model load without its broker line (info lines are missing);
 - dropped messages, a capture line that did not decode, or fewer chunks or decodes than the live session counted.
 
 The last capture line is often cut off when the capture is stopped with Ctrl-C. That warning alone is not a problem.
+
+### Watchdog resets
+
+Every reset in the capture counts, and the table places each one: "at 14:58, 312 s after q8's done". The time is from the recording's start. "N s after Stop" follows when the reset came after Stop, then where it fell against the nearest answer: inside it, before its lease (or its ask, when it never got the model), or after its `done`. The watchdog acts only when a live session ends, so a reset at Stop is not an answer's doing, but the rule still counts it.
 
 ### Memory
 

@@ -21,6 +21,7 @@ writes, with the fields analyze.py reads. Times are seconds after 10:00:00:
 
 import json
 import math
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,9 @@ import pytest
 import analyze
 
 EXCERPT = Path(__file__).parent / "testdata" / "excerpt.ndjson"
+# The excerpt's answers that did not complete: each makes the verdict undetermined.
+STOPPED = "question 2 stopped"
+FAILED = "question 4 failed (There's no transcript to answer from yet.)"
 
 
 def lines(without=(), replacing=()):
@@ -151,15 +155,16 @@ def test_a_model_load_without_its_broker_line_warns():
     assert warnings[0].startswith("question 1 loaded the model, but no 'Model opened' line is in the range")
 
 
-@pytest.mark.parametrize("without, reason", [
-    (["plan name="], "no plan line: start the capture before the app"),
-    (["plan-done"], "no plan-done line: the app quit or the capture ended early"),
-    (["ask q=4", "done q=4"], "only 4 of 5 questions were asked, skipped or not sent: the app quit or the capture ended early"),
+@pytest.mark.parametrize("without, reason, outcomes", [
+    (["plan name="], "no plan line: start the capture before the app", [STOPPED, FAILED]),
+    (["plan-done"], "no plan-done line: the app quit or the capture ended early", [STOPPED, FAILED]),
+    (["ask q=4", "done q=4"], "only 4 of 5 questions were asked, skipped or not sent: the app quit or the capture ended early",
+     [STOPPED]),
 ])
-def test_a_run_that_ended_early_is_undetermined(without, reason):
+def test_a_run_that_ended_early_is_undetermined(without, reason, outcomes):
     result = analyzed(lines(without=[*without, "A live decode has not returned"]))
     assert reason in result["warnings"]
-    assert result["contention"] == {"passes": None, "reasons": [reason]}
+    assert result["contention"] == {"passes": None, "reasons": [reason, *outcomes]}
 
 
 def test_without_a_recording_start_the_whole_capture_counts():
@@ -194,6 +199,57 @@ def test_a_loss_event_without_a_timestamp_is_counted():
 
 def test_contention_fails_on_a_watchdog_reset(result):
     assert result["contention"] == {"passes": False, "reasons": ["1 watchdog reset"]}
+    # The reset at 10:01:00 came 54 s after the recording started at 10:00:06.
+    assert result["watchdogResetTimes"] == ["at 0:54, 5 s after q2's done"]
+
+
+@pytest.mark.parametrize("time, expected", [
+    (25.0, "at 0:15, inside q1's answer"),
+    (16.0, "at 0:06, 4 s before q1's lease"),
+    (35.0, "at 0:25, 5 s after q1's done"),
+    (45.0, "at 0:35, 5 s before q2's ask"),
+    (130.0, "at 2:00, 10 s after Stop, 70 s after q2's done"),
+])
+def test_a_reset_is_placed_against_the_nearest_answer_and_stop(time, expected):
+    # The recording runs from 10 to 120; q1 holds the model from 20 to 30, q2 never got it (50 to 60).
+    run = analyze.Run(recording_started=10.0, recording_stopped=120.0)
+    answers = [analyze.Answer(question=1, ask=18.0, lease=20.0, done=30.0), analyze.Answer(question=2, ask=50.0, done=60.0)]
+    assert analyze.reset_time(time, answers, run) == expected
+
+
+def test_a_reset_without_a_recording_start_or_answers_reads_the_clock():
+    time = datetime(2026, 10, 29, 10, 15, 0).timestamp()
+    assert analyze.reset_time(time, [], analyze.Run()) == "at 10:15:00"
+
+
+def test_the_model_must_match_the_plan():
+    def model_warnings(lines_):
+        return [warning for warning in analyzed(lines_)["warnings"] if warning.startswith("the plan is for")]
+
+    assert model_warnings(lines()) == []
+    assert model_warnings(lines(replacing=[("name=concurrent-e2b", "name=concurrent-12b")])) == [
+        "the plan is for 12B, but the run loaded gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf: select the plan's model",
+    ]
+    # No model loaded, as in a baseline run: nothing to compare.
+    assert model_warnings(lines(without=["Model opened"], replacing=[("name=concurrent-e2b", "name=concurrent-12b")])) == []
+
+
+def test_an_answer_asked_in_the_app_warns():
+    done = next(line for line in lines() if "done q=1" in line)
+    other = done.replace("done q=1", "done q=-").replace("10:00:30.000000", "10:00:40.000000")
+    result = analyzed([*lines(), other])
+    assert "1 answer not asked by the driver (someone asked in the app): their load falls outside the answer windows" in result["warnings"]
+    assert [row["question"] for row in result["answers"]] == [1, 2, 4]
+
+
+def test_an_aborted_plan_warns():
+    plan_done = next(line for line in lines() if "plan-done" in line)
+    abort = plan_done.replace("plan-done", "abort reason=liveTranscriptOff")
+    result = analyzed([*lines(without=["plan-done", "A live decode has not returned"]), abort])
+    assert "the driver aborted the plan: liveTranscriptOff" in result["warnings"]
+    assert result["contention"] == {
+        "passes": None, "reasons": ["no plan-done line: the app quit or the capture ended early", STOPPED, FAILED],
+    }
 
 
 def test_contention_is_undetermined_when_no_answer_finished():
@@ -207,8 +263,16 @@ def test_contention_is_undetermined_when_no_answer_finished():
 def test_contention_is_undetermined_when_the_last_answer_did_not_finish():
     result = analyzed(lines(without=["done q=4", "A live decode has not returned"]))
     assert result["contention"] == {
-        "passes": None, "reasons": ["question 4 has no done line: the app quit or the capture ended early"],
+        "passes": None, "reasons": ["question 4 has no done line: the app quit or the capture ended early", STOPPED],
     }
+
+
+def test_an_answer_that_did_not_complete_makes_the_verdict_undetermined():
+    # The driver never presses the chat's Stop, so a stopped or failed answer is a fault in the run.
+    without_reset = ["A live decode has not returned"]
+    assert analyzed(lines(without=without_reset))["contention"] == {"passes": None, "reasons": [STOPPED, FAILED]}
+    completed = [("outcome=stopped", "outcome=complete"), ("outcome=failed", "outcome=complete")]
+    assert analyzed(lines(without=without_reset, replacing=completed))["contention"] == {"passes": True, "reasons": []}
 
 
 def test_an_unknown_catch_up_is_not_never():
@@ -222,13 +286,13 @@ def test_an_unknown_catch_up_is_not_never():
 
 def test_contention_is_undetermined_without_decode_lines():
     contention = analyzed(lines(without=["decode ms=", "A live decode has not returned"]))["contention"]
-    assert contention == {"passes": None, "reasons": ["no live decode lines in the answer windows"]}
+    assert contention == {"passes": None, "reasons": [STOPPED, FAILED, "no live decode lines in the answer windows"]}
 
 
 def test_contention_is_undetermined_without_live_status_lines():
     without_live = analyzed(lines(without=['"category": "live",']))
     assert without_live["catchUpSeconds"]["perAnswer"] == ["unknown", "unknown", "unknown"]
-    assert without_live["contention"] == {"passes": None, "reasons": ["no live status lines in the range"]}
+    assert without_live["contention"] == {"passes": None, "reasons": [STOPPED, FAILED, "no live status lines in the range"]}
 
 
 def test_contention_fails_when_live_transcription_stops():
@@ -276,7 +340,7 @@ def test_markdown_lists_every_measure(result):
         "| Live delay inside answers, to drawn | median 2.5 s, p95 3.5 s (2 chunks) |",
         "| Live delay outside answers, to update | median 1.0 s, p95 1.0 s (2 chunks) |",
         "| Longest live decode inside answers | 3.00 s |",
-        "| Watchdog resets | 1 |",
+        "| Watchdog resets | 1 (at 0:54, 5 s after q2's done) |",
         "| Live engine restarts / failures | 1 / 0 |",
         "| Catch-up after answers | median 12.0 s; per answer (s): 12.0, 8.0, never |",
         "| Time to first token, cold | 3.0 s |",

@@ -2,16 +2,49 @@
     import Foundation
     import os
 
+    /// What an unattended plan needs from the app, which MeetingChat cannot
+    /// reach: the end of its launch, the Settings model picker's path, and the
+    /// Record and Stop buttons' paths. `AppCore.live` passes them. Debug
+    /// builds only.
+    public struct ChatLoadAppControls: Sendable {
+        /// Returns once the app's launch has applied its settings, found the
+        /// downloaded models and prepared the speech models.
+        public var waitForLaunch: @MainActor () async -> Void
+        /// Selects the catalog model with this id; true when it is then the
+        /// active model.
+        public var selectModel: @MainActor (String) async -> Bool
+        public var startRecording: @MainActor () async -> Void
+        public var stopRecording: @MainActor () async -> Void
+
+        public init(
+            waitForLaunch: @escaping @MainActor () async -> Void,
+            selectModel: @escaping @MainActor (String) async -> Bool,
+            startRecording: @escaping @MainActor () async -> Void,
+            stopRecording: @escaping @MainActor () async -> Void
+        ) {
+            self.waitForLaunch = waitForLaunch
+            self.selectModel = selectModel
+            self.startRecording = startRecording
+            self.stopRecording = stopRecording
+        }
+    }
+
     /// Asks a plan's questions through the chat service while a recorded
     /// meeting plays, for the chat measurement (`Tools/chat_bench`). Started by
     /// the launch argument `-chatLoadTest <plan.json>`. Debug builds only.
     ///
-    /// Once the plan's start event comes (a recording's start or its stop), it
-    /// asks each question at its due time, one at a time: a question whose
-    /// time comes while an answer runs waits for it. It writes one `chat-load`
-    /// line per event, which `Tools/chat_bench/analyze.py` reads:
-    /// - `plan name= mode= closeModelAfterAnswer= startAfter= delay= interval= questions=`
-    ///   (`closeModelAfterAnswer=-` keeps this Mac's policy)
+    /// Once the app has launched, it selects the plan's model and, for a plan
+    /// with a recording, starts the recording itself and stops it after the
+    /// plan's duration. Once the plan's start event comes (a recording's start
+    /// or its stop), it asks each question at its due time, one at a time: a
+    /// question whose time comes while an answer runs waits for it. It writes
+    /// one `chat-load` line per event, which `Tools/chat_bench/analyze.py`
+    /// and `run.sh` read:
+    /// - `plan name= mode= closeModelAfterAnswer= startAfter= delay= interval=
+    ///   questions= model= record= live=` (`closeModelAfterAnswer=-` keeps
+    ///   this Mac's policy; `model=` is the active model's file; `record=` is
+    ///   the recording's start delay and duration, `-` without one; `live=` is
+    ///   whether a recording would get a live transcript)
     /// - `worker name= path=`: each worker's executable, or `missing`
     /// - `recording-started`, `recording-stopped`
     /// - `ask q= t=` (seconds after the start), `skip q= reason=`, `not-sent q=`
@@ -19,7 +52,11 @@
     /// - `done q= outcome= promptTokens= context= partial= tokens= generated=
     ///   generationSeconds= cited= linked=`, then `error=` and the failure's
     ///   text for a failed answer
-    /// - `plan-done`
+    /// - `abort reason=`: the plan cannot run (`modelNotSelected`,
+    ///   `liveTranscriptOff`, `liveModelMissing`, `recordingDidNotStart`,
+    ///   `noAppControls`); no `plan-done` follows
+    /// - `plan-done`: the questions were asked and the driver's recording,
+    ///   if any, has stopped
     /// - `memory app= transcriber= llm= appResident= transcriberResident=
     ///   llmResident=`: physical footprints and resident sizes in MiB, every
     ///   second, `-` for a worker that is not running.
@@ -31,14 +68,20 @@
 
         let plan: ChatLoadPlan
         private let chat: MeetingChatService
+        private let app: ChatLoadAppControls?
         private let clock: any Clock<Duration>
         private let elapsed: @Sendable () -> Duration
         private var tasks: [Task<Void, Never>] = []
+        /// The plan's task, which ends with `plan-done` or `abort`. Tests await it.
+        private(set) var planTask: Task<Void, Never>?
 
         /// The meeting the plan asks about, and when its start event came.
         private var start: (meetingID: UUID, at: Duration)?
         private var startWaiter: CheckedContinuation<Void, Never>?
         private var answerWaiter: CheckedContinuation<Void, Never>?
+        /// When the first recording started, from its event.
+        private var recordingStartedAt: Duration?
+        private var aborted = false
         /// Answers that ended while the driver ran.
         private var endedCount = 0
         /// The question being answered, numbered from 1.
@@ -49,10 +92,13 @@
         private(set) var askTimes: [Duration] = []
         /// Each ended answer's figures, in order. Tests read it.
         private(set) var results: [ChatLoadResult] = []
+        /// Every line written, except the memory lines. Tests read it.
+        private(set) var lines: [String] = []
 
-        init(plan: ChatLoadPlan, chat: MeetingChatService, clock: any Clock<Duration> = ContinuousClock()) {
+        init(plan: ChatLoadPlan, chat: MeetingChatService, clock: any Clock<Duration> = ContinuousClock(), app: ChatLoadAppControls? = nil) {
             self.plan = plan
             self.chat = chat
+            self.app = app
             self.clock = clock
             elapsed = MeetingChatService.stopwatch(on: clock)
         }
@@ -62,6 +108,7 @@
         @discardableResult
         public static func startIfRequested(
             chat: MeetingChatService,
+            app: ChatLoadAppControls? = nil,
             arguments: [String] = ProcessInfo.processInfo.arguments
         ) -> ChatLoadDriver? {
             guard let path = ChatLoadPlan.path(in: arguments) else { return nil }
@@ -72,19 +119,20 @@
                 logger.error("Couldn't read the plan at \(path, privacy: .public): \(String(describing: error), privacy: .public)")
                 return nil
             }
-            let driver = ChatLoadDriver(plan: plan, chat: chat)
+            let driver = ChatLoadDriver(plan: plan, chat: chat, app: app)
             driver.start(sampler: .forApp())
             running = driver
             return driver
         }
 
-        /// Forces the plan's mode, listens to the service, and starts the
-        /// schedule and, with a sampler, the memory log.
+        /// Forces the plan's mode, listens to the service, and starts the plan
+        /// and, with a sampler, the memory log.
         func start(sampler: FootprintSampler?) {
             chat.policy = chat.policy.override(mode: plan.mode.policyMode, closesAfterAnswer: plan.closeModelAfterAnswer)
             chat.loadObserver = { [weak self] event in self?.handle(event) }
-            log("plan name=\(plan.name) mode=\(plan.mode.rawValue) closeModelAfterAnswer=\(plan.closeModelAfterAnswer.map(String.init) ?? "-") startAfter=\(plan.startAfter.rawValue) delay=\(plan.startDelaySeconds) interval=\(plan.intervalSeconds) questions=\(plan.questions.count)")
-            tasks.append(Task { await self.runPlan() })
+            let planTask = Task { await self.run() }
+            self.planTask = planTask
+            tasks.append(planTask)
             if let sampler {
                 log("worker name=transcriber path=\(sampler.transcriberExecutable ?? "missing")")
                 log("worker name=llm path=\(sampler.llmExecutable ?? "missing")")
@@ -92,7 +140,7 @@
             }
         }
 
-        /// Ends the schedule and the memory log.
+        /// Ends the plan and the memory log.
         func stop() {
             tasks.forEach { $0.cancel() }
             tasks = []
@@ -102,26 +150,88 @@
             answerWaiter = nil
         }
 
-        // MARK: - Schedule
+        // MARK: - Plan
 
-        private func runPlan() async {
-            if start == nil {
+        /// After the launch: the model, the plan line, then the recording and
+        /// the questions side by side.
+        private func run() async {
+            await app?.waitForLaunch()
+            guard !Task.isCancelled else { return }
+            let modelSelected = await selectModel()
+            log(planLine)
+            guard modelSelected else { return abortPlan("modelNotSelected") }
+            if let record = plan.record {
+                guard let app else { return abortPlan("noAppControls") }
+                guard chat.live.isEnabled else { return abortPlan("liveTranscriptOff") }
+                guard chat.live.canStartLive else { return abortPlan("liveModelMissing") }
+                async let recorded = makeRecording(record, with: app)
+                await askQuestions()
+                guard await recorded else { return }
+            } else {
+                await askQuestions()
+            }
+            guard !Task.isCancelled, !aborted else { return }
+            log("plan-done")
+        }
+
+        private var planLine: String {
+            let model = chat.modelURL()?.lastPathComponent ?? "-"
+            let record = plan.record.map { "\($0.startAfterSeconds)+\($0.durationSeconds)" } ?? "-"
+            let live = chat.live.canStartLive ? "on" : "off"
+            return "plan name=\(plan.name) mode=\(plan.mode.rawValue) closeModelAfterAnswer=\(plan.closeModelAfterAnswer.map(String.init) ?? "-") startAfter=\(plan.startAfter.rawValue) delay=\(plan.startDelaySeconds) interval=\(plan.intervalSeconds) questions=\(plan.questions.count) model=\(model) record=\(record) live=\(live)"
+        }
+
+        /// Selects the plan's model as Settings does; false when it could not.
+        private func selectModel() async -> Bool {
+            guard let model = plan.model else { return true }
+            guard let app else { return false }
+            return await app.selectModel(model)
+        }
+
+        /// Starts the plan's recording after its delay, and stops it after its
+        /// duration. False when it did not start or the plan stopped.
+        private func makeRecording(_ record: ChatLoadPlan.Recording, with app: ChatLoadAppControls) async -> Bool {
+            guard await sleep(untilElapsed: elapsed() + .seconds(record.startAfterSeconds)) else { return false }
+            await app.startRecording()
+            guard let startedAt = recordingStartedAt else {
+                abortPlan("recordingDidNotStart")
+                return false
+            }
+            guard await sleep(untilElapsed: startedAt + .seconds(record.durationSeconds)) else { return false }
+            await app.stopRecording()
+            return true
+        }
+
+        /// Ends the plan without `plan-done`.
+        private func abortPlan(_ reason: String) {
+            log("abort reason=\(reason)")
+            aborted = true
+            startWaiter?.resume()
+            startWaiter = nil
+        }
+
+        private func askQuestions() async {
+            if start == nil, !aborted {
                 await withCheckedContinuation { startWaiter = $0 }
             }
-            guard let start, !Task.isCancelled else { return }
+            guard let start, !Task.isCancelled, !aborted else { return }
             for (index, question) in plan.questions.enumerated() {
-                let wait = start.at + plan.dueTime(ofQuestion: index) - elapsed()
-                if wait > .zero {
-                    do {
-                        try await clock.sleep(for: wait)
-                    } catch {
-                        return
-                    }
-                }
+                guard await sleep(untilElapsed: start.at + plan.dueTime(ofQuestion: index)) else { return }
                 await ask(question, number: index + 1, in: start.meetingID)
                 guard !Task.isCancelled else { return }
             }
-            log("plan-done")
+        }
+
+        /// Sleeps until the stopwatch reads `deadline`; false when cancelled.
+        private func sleep(untilElapsed deadline: Duration) async -> Bool {
+            let wait = deadline - elapsed()
+            guard wait > .zero else { return !Task.isCancelled }
+            do {
+                try await clock.sleep(for: wait)
+                return true
+            } catch {
+                return false
+            }
         }
 
         private func ask(_ question: String, number: Int, in meetingID: UUID) async {
@@ -164,6 +274,7 @@
             switch event {
             case let .recordingStarted(meetingID):
                 log("recording-started")
+                if recordingStartedAt == nil { recordingStartedAt = elapsed() }
                 if plan.startAfter == .recordingStart { begin(meetingID) }
             case let .recordingStopped(meetingID):
                 log("recording-stopped")
@@ -199,6 +310,7 @@
         }
 
         private func log(_ line: String) {
+            lines.append(line)
             Self.logger.notice("\(line, privacy: .public)")
         }
 

@@ -98,7 +98,7 @@ public extension AppCore {
     @MainActor
     private static func startChatLoadDriverIfRequested(_ core: AppCore) {
         #if DEBUG
-            ChatLoadDriver.startIfRequested(chat: core.chat)
+            ChatLoadDriver.startIfRequested(chat: core.chat, app: core.chatLoadControls())
         #endif
     }
 
@@ -305,3 +305,47 @@ private struct LiveTranscriberAdapter: Transcribing {
         await transcriber.shutdown()
     }
 }
+
+#if DEBUG
+
+    // MARK: - Chat measurement
+
+    extension AppCore {
+        /// What the chat load driver uses to run a plan with nobody at the
+        /// Mac: the end of the launch and of the speech models' preparation,
+        /// the Settings model picker's path, and the Record and Stop buttons'
+        /// paths. Debug builds only.
+        ///
+        /// - Parameter settle: How long no speech model must have been
+        ///   prepared before the launch counts as done.
+        func chatLoadControls(settle: Duration = .seconds(3)) -> ChatLoadAppControls {
+            ChatLoadAppControls(
+                waitForLaunch: { [weak self] in
+                    await self?.waitUntilLaunched()
+                    await self?.waitUntilModelsPrepared(settle: settle)
+                },
+                selectModel: { [weak self] id in
+                    guard let self else { return false }
+                    await modelManager.selectModel(id: id)
+                    return modelManager.activeModelID == id
+                },
+                startRecording: { [weak self] in await self?.startRecording() },
+                stopRecording: { [weak self] in await self?.stopRecording() }
+            )
+        }
+
+        /// Returns once no speech model has been prepared for `settle`, as for
+        /// a user who opens the app ahead of a meeting. A new build, or a
+        /// Core ML cache that macOS purged under low disk space, compiles the
+        /// models for minutes first, and a recording started meanwhile holds
+        /// its live transcript until the live model's compile ends.
+        func waitUntilModelsPrepared(settle: Duration = .seconds(3), poll: Duration = .milliseconds(500)) async {
+            let clock = ContinuousClock()
+            var idleSince = clock.now
+            while clock.now - idleSince < settle, !Task.isCancelled {
+                if transcription.isPreparingModels { idleSince = clock.now }
+                try? await Task.sleep(for: poll)
+            }
+        }
+    }
+#endif

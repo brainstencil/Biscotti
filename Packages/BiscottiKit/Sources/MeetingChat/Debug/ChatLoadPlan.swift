@@ -23,6 +23,14 @@
             case recordingStop
         }
 
+        /// A recording the driver makes itself, for unattended runs.
+        public struct Recording: Decodable, Equatable, Sendable {
+            /// From the end of the app's launch to Record.
+            public var startAfterSeconds: Double
+            /// From the recording's start to Stop.
+            public var durationSeconds: Double
+        }
+
         /// The launch argument followed by the plan file's path.
         public static let launchArgument = "-chatLoadTest"
 
@@ -41,6 +49,12 @@
         /// an answer runs waits for it.
         public var intervalSeconds: Double
         public var questions: [String]
+        /// The catalog model selected for the run, as in Settings (for
+        /// example `gemma-4-e2b`). Nil keeps the model selected in Settings.
+        public var model: String?
+        /// The recording the driver starts and stops. Nil waits for one
+        /// started in the app.
+        public var record: Recording?
 
         /// When question `index` (from 0) is due, after the plan's start.
         func dueTime(ofQuestion index: Int) -> Duration {

@@ -11,13 +11,14 @@ private let gib: UInt64 = 1 << 30
 @Suite("MeetingChatService -- resource policy")
 @MainActor
 struct MeetingChatPolicyTests {
-    @Test("Every Mac answers during a recording until the measurement sets a limit")
-    func policyDefaultsToConcurrent() {
-        for memory in [8 * gib, 16 * gib, 64 * gib] {
+    @Test("8 GB Macs answer after Stop; Macs with 16 GB or more answer during a recording")
+    func policyWaitsOnlyOnEightGigabyteMacs() {
+        #expect(ChatResourcePolicy(physicalMemory: 8 * gib).mode() == .waitForStop)
+        for memory in [16 * gib, 24 * gib, 64 * gib] {
             #expect(ChatResourcePolicy(physicalMemory: memory).mode() == .concurrent)
         }
-        #expect(ChatResourcePolicy(physicalMemory: 8 * gib, waitForStopMaximumMemory: 8 * gib).mode() == .waitForStop)
-        #expect(ChatResourcePolicy(physicalMemory: 16 * gib, waitForStopMaximumMemory: 8 * gib).mode() == .concurrent)
+        #expect(ChatResourcePolicy(physicalMemory: 16 * gib, waitForStopMaximumMemory: 16 * gib).mode() == .waitForStop)
+        #expect(ChatResourcePolicy(physicalMemory: 8 * gib, waitForStopMaximumMemory: 0).mode() == .concurrent)
     }
 
     @Test("During a recording, Macs under 24 GB close the model after each answer")

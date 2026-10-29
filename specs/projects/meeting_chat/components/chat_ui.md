@@ -94,6 +94,11 @@ struct ChatHistoryPresentation: Equatable {
 - A highlighted row fills its bubble with `findHighlightFocused` instead of its usual fill and shows its time, 11 pt mono `inkSecondary`, 8 pt to the bubble's right.
 - After 2 s the list fades the fill back over 0.6 s (`.easeOut`; no animation under Reduce Motion) and clears the binding.
 - The drawer and the Transcript tab both pass the binding.
+- **A reveal holds its place in the live drawer** (`FollowController`, added in phase 10 after hardware check F14). A drawer that opens for a time (a chat chip, or a note's time) asks for the newest item while it lays out, and that scroll can land before or after the reveal's. For `appearanceSettle` (1 s) after a reveal, reaching the bottom does not resume following: the list asks for the revealed item again and stays reading back, with the held items and Return to live. Return to live ends the hold at once. Two limits follow from it, both intended, as they match live_transcript's functional spec ("Clicking a note's time … stops following") and keep a chip's highlight in view:
+  - Revealing an item in the last screenful stays reading back at the bottom, instead of resuming following.
+  - A reader who scrolls to the bottom within that second is pulled back to the revealed item until the second ends, like the appearance settle's limit (live_transcript `components/transcript_bubble_view.md`, "Appearing"); reaching the bottom later, or Return to live, follows again.
+
+  Find is exempt: while find is open, a landing at the bottom inside that second is left to find (a match in the last screenful stays in view), and the list is not pulled back to the revealed item.
 
 ## Meeting page (`MeetingDetailUI`)
 

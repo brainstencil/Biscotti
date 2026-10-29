@@ -166,13 +166,22 @@ private struct BubbleRow: View {
     /// The highlighted bubble's time, 8 pt outside it: to the right of a
     /// leading bubble, to the left of a trailing one, which has no room on
     /// its right.
+    ///
+    /// The overlay puts a zero-width anchor on the bubble's outer edge, and
+    /// the time hangs off the anchor's far side. Alignment guides on the
+    /// time itself were ignored in this overlay, which drew the time inside
+    /// the bubble, over its text (meeting chat phase 10 hardware check F1).
     private var highlightTime: some View {
-        Text(TimeFormatting.formatPlaybackTime(bubble.startTime))
-            .font(.biscottiMono(11))
-            .foregroundStyle(.inkSecondary)
-            .fixedSize()
-            .alignmentGuide(.trailing) { $0[.leading] - Self.highlightTimeGap }
-            .alignmentGuide(.leading) { $0[.trailing] + Self.highlightTimeGap }
+        let isLeading = bubble.side == .leading
+        return Color.clear
+            .frame(width: 0)
+            .overlay(alignment: isLeading ? .leading : .trailing) {
+                Text(TimeFormatting.formatPlaybackTime(bubble.startTime))
+                    .font(.biscottiMono(11))
+                    .foregroundStyle(.inkSecondary)
+                    .fixedSize()
+                    .padding(isLeading ? .leading : .trailing, Self.highlightTimeGap)
+            }
             .transition(.opacity)
             .accessibilityHidden(true)
     }

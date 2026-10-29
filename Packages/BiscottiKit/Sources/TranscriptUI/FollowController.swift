@@ -76,6 +76,12 @@ public final class FollowController {
     /// Find opened while following: closing it returns to live.
     @ObservationIgnored private var followsAfterFind = false
     @ObservationIgnored private var settlesUntil: ContinuousClock.Instant?
+    /// Until when reaching the bottom does not resume following after a reveal.
+    @ObservationIgnored private var revealSettlesUntil: ContinuousClock.Instant?
+    /// The item the last reveal scrolled to, asked for again while it settles.
+    @ObservationIgnored private var revealedItemID: String?
+    /// The list landed away from the bottom since the last reveal.
+    @ObservationIgnored private var landedSinceReveal = false
     @ObservationIgnored private var nextToken = 0
     @ObservationIgnored private let now: () -> ContinuousClock.Instant
 
@@ -97,6 +103,10 @@ public final class FollowController {
         settlesUntil.map { now() < $0 } ?? false
     }
 
+    private var isRevealSettling: Bool {
+        revealSettlesUntil.map { now() < $0 } ?? false
+    }
+
     /// What the list shows: the held items while reading back, else the latest.
     public func displayedItems(latest: [TranscriptItem]) -> [TranscriptItem] {
         heldItems ?? latest
@@ -110,8 +120,10 @@ public final class FollowController {
 
     /// The list scrolled or its content changed size.
     ///
-    /// Reaching the bottom resumes following (unless find is open). Leaving
-    /// it stops following only when the offset moved up: content that grows
+    /// Reaching the bottom resumes following, unless find is open or a
+    /// reveal happened less than `appearanceSettle` ago; then, with find
+    /// closed, the list scrolls to the revealed item again. Leaving it
+    /// stops following only when the offset moved up: content that grows
     /// under a following list also leaves it short of the bottom until the
     /// next scroll to the newest item, and that must not stop following.
     public func scrollChanged(_ sample: ScrollSample, latest: [TranscriptItem]) {
@@ -120,9 +132,14 @@ public final class FollowController {
         guard mode == .live else { return }
 
         if sample.isAtBottom {
+            if isRevealSettling, !isFollowing, !isFindOpen {
+                keepRevealedItem(at: sample)
+                return
+            }
             if !isFollowing, !isFindOpen { resumeFollowing(latest) }
             return
         }
+        if isRevealSettling { landedSinceReveal = true }
         guard isFollowing else { return }
         if isSettling {
             if scrollRequest == nil, let newest = latest.last { request(newest.id, .bottom) }
@@ -162,11 +179,40 @@ public final class FollowController {
     /// after find closes. A reader already reading back may ask for a time
     /// past the items held on screen, so the held items catch up with the
     /// latest first; the list stays reading back at the target.
+    ///
+    /// For `appearanceSettle` after a reveal, reaching the bottom does not
+    /// resume following; with find closed, the list scrolls to the revealed
+    /// item again. A list that opens for the reveal (a time in the chat, a
+    /// note's time) has already asked for the newest item, and that scroll
+    /// can land before or after the reveal's; resuming there would take the
+    /// list back to the live end (meeting chat phase 10 hardware check F14).
+    /// An item in the last screenful stays reading back at the bottom,
+    /// held, with Return to live.
     public func reveal(time: TimeInterval, latest: [TranscriptItem]) {
         followsAfterFind = false
         if mode == .live { stopFollowing(latest) }
         guard let target = Self.revealTarget(for: time, in: displayedItems(latest: latest)) else { return }
+        if mode == .live {
+            revealSettlesUntil = now() + Self.appearanceSettle
+            revealedItemID = target
+            landedSinceReveal = false
+        }
         request(target, .top)
+    }
+
+    /// Inside a reveal's settle, with find closed, the list reached the
+    /// bottom, most often by the scroll to the newest item that the list
+    /// asked for as it appeared. Unless a scroll is still pending, ask for
+    /// the revealed item again, so the list ends there whichever landed last.
+    private func keepRevealedItem(at sample: ScrollSample) {
+        let order = landedSinceReveal
+            ? "after the list had landed away from the bottom"
+            : "before the list landed anywhere else"
+        let action = scrollRequest == nil ? "scrolling to the revealed item again" : "a scroll is still pending"
+        Self.log.notice("The transcript stays at a revealed time: the list reached the bottom \(sample.offsetY, privacy: .public) of \(sample.contentHeight, privacy: .public) pt \(order, privacy: .public); \(action, privacy: .public)")
+        if scrollRequest == nil, let revealedItemID {
+            request(revealedItemID, .top)
+        }
     }
 
     /// Scrolls to an item, for example the current find match.
@@ -197,6 +243,8 @@ public final class FollowController {
 
     private func resumeFollowing(_ latest: [TranscriptItem]) {
         isFollowing = true
+        revealSettlesUntil = nil
+        revealedItemID = nil
         heldItems = nil
         if let newest = latest.last { request(newest.id, .bottom) }
     }

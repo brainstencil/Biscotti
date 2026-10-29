@@ -250,6 +250,127 @@ struct FollowControllerTests {
     }
 }
 
+/// A reveal's hold: for `appearanceSettle` after a reveal, the bottom does
+/// not resume following, and the list asks for the revealed item again.
+@Suite("FollowController -- reveal hold")
+@MainActor
+struct FollowControllerRevealHoldTests {
+    @Test("a scroll to the newest that lands before the reveal's scroll still ends at the revealed item")
+    func revealHoldsWhenTheNewestLandsFirst() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        // The drawer opens for a time in the chat: the list appears and,
+        // while it lays out, asks for the newest item.
+        follower.listAppeared()
+        follower.scrollChanged(sample(offset: 0), latest: items)
+        #expect(follower.scrollRequest?.itemID == "c")
+        follower.consumeScrollRequest()
+
+        follower.reveal(time: 6, latest: items)
+        #expect(follower.scrollRequest?.itemID == "b")
+        follower.consumeScrollRequest()
+
+        // The scroll to the newest lands first: the list asks for the revealed item again.
+        follower.scrollChanged(sample(offset: 800), latest: items)
+        #expect(!follower.isFollowing)
+        #expect(follower.heldItems == items)
+        #expect(follower.scrollRequest?.itemID == "b")
+        #expect(follower.scrollRequest?.anchor == .top)
+        follower.consumeScrollRequest()
+
+        // The reveal's scroll lands.
+        follower.scrollChanged(sample(offset: 250), latest: items)
+        #expect(!follower.isFollowing)
+        #expect(follower.scrollRequest == nil)
+
+        // Later, the reader scrolling to the bottom follows again.
+        clock.advance(FollowController.appearanceSettle + .milliseconds(1))
+        follower.scrollChanged(sample(offset: 800), latest: items)
+        #expect(follower.isFollowing)
+    }
+
+    @Test("a scroll to the newest that lands after the reveal's scroll is undone by a scroll back to the revealed item")
+    func revealHoldsWhenTheNewestLandsLast() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        follower.listAppeared()
+        follower.scrollChanged(sample(offset: 0), latest: items)
+        follower.consumeScrollRequest()
+        follower.reveal(time: 6, latest: items)
+        follower.consumeScrollRequest()
+
+        // The reveal's scroll lands, then the late scroll to the newest.
+        follower.scrollChanged(sample(offset: 250), latest: items)
+        follower.scrollChanged(sample(offset: 800), latest: items)
+
+        #expect(!follower.isFollowing)
+        #expect(follower.scrollRequest?.itemID == "b")
+        #expect(follower.scrollRequest?.anchor == .top)
+    }
+
+    @Test("a scroll request still waiting is not asked for twice")
+    func revealDoesNotStackRequests() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        follower.reveal(time: 6, latest: items)
+        let pending = follower.scrollRequest
+
+        follower.scrollChanged(sample(offset: 800), latest: items)
+
+        #expect(follower.scrollRequest == pending)
+    }
+
+    @Test("with find open, a bottom landing right after a reveal is left to find")
+    func findOpenAfterARevealIsNotPulledBack() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        follower.reveal(time: 6, latest: items)
+        follower.consumeScrollRequest()
+        follower.findOpened(latest: items)
+
+        // A find match in the last screenful lands at the bottom inside the reveal's second.
+        follower.scrollChanged(sample(offset: 800), latest: items)
+
+        #expect(follower.scrollRequest == nil)
+        #expect(!follower.isFollowing)
+    }
+
+    @Test("revealing the newest item stays reading back at the bottom")
+    func revealingTheNewestItemStaysReadingBack() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        follower.reveal(time: 13, latest: items)
+        #expect(follower.scrollRequest?.itemID == "c")
+        follower.consumeScrollRequest()
+
+        // The item is in the last screenful: its scroll lands at the bottom.
+        follower.scrollChanged(sample(offset: 800), latest: items)
+
+        #expect(!follower.isFollowing)
+        #expect(follower.heldItems == items)
+    }
+
+    @Test("Return to live right after a reveal follows at once, and ends the reveal's hold")
+    func returnToLiveRightAfterARevealFollows() {
+        let clock = ManualClock()
+        let follower = FollowController(mode: .live, now: { clock.now })
+        follower.reveal(time: 6, latest: items)
+
+        follower.returnToLive(latest: items)
+        #expect(follower.isFollowing)
+        #expect(follower.scrollRequest?.itemID == "c")
+        follower.consumeScrollRequest()
+        follower.scrollChanged(sample(offset: 800), latest: items)
+
+        // Still inside the reveal's second: leaving the bottom and coming
+        // back follows again, because Return to live ended the hold.
+        follower.scrollChanged(sample(offset: 600), latest: items)
+        #expect(!follower.isFollowing)
+        follower.scrollChanged(sample(offset: 800), latest: items)
+        #expect(follower.isFollowing)
+    }
+}
+
 /// A clock the test moves by hand.
 @MainActor
 private final class ManualClock {

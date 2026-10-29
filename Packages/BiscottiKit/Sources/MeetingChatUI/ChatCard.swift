@@ -67,9 +67,17 @@ public struct ChatCard<Leading: View>: View {
         .shadow(color: Tokens.cardShadow, radius: 2, y: 1)
         .overlay(alignment: .bottom) {
             if placement == .recordingCard {
-                // In the window's bottom margin, under the card.
-                ChatFootnote()
-                    .alignmentGuide(.bottom) { $0[.top] - footnoteGap }
+                // In the window's bottom margin, under the card: it hangs
+                // off a zero-height anchor on the card's bottom edge. An
+                // alignment guide on the footnote was ignored here and drew
+                // it across the card's edge (meeting chat phase 10 hardware check B9).
+                Color.clear
+                    .frame(height: 0)
+                    .overlay(alignment: .top) {
+                        ChatFootnote()
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, footnoteGap)
+                    }
             }
         }
         // Esc with the focus elsewhere in the card; the field handles its own.

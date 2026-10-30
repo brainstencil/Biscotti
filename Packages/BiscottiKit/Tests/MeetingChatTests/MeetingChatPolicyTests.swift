@@ -11,68 +11,27 @@ private let gib: UInt64 = 1 << 30
 @Suite("MeetingChatService -- resource policy")
 @MainActor
 struct MeetingChatPolicyTests {
-    @Test("8 GB Macs answer after Stop; Macs with 16 GB or more answer during a recording")
-    func policyWaitsOnlyOnEightGigabyteMacs() {
-        #expect(ChatResourcePolicy(physicalMemory: 8 * gib).mode() == .waitForStop)
-        for memory in [16 * gib, 24 * gib, 64 * gib] {
+    @Test("With the defaults every Mac answers during a recording; Macs at or under the limit answer after Stop")
+    func policyDefaultsToConcurrent() {
+        for memory in [8 * gib, 16 * gib, 24 * gib, 64 * gib] {
             #expect(ChatResourcePolicy(physicalMemory: memory).mode() == .concurrent)
         }
-        #expect(ChatResourcePolicy(physicalMemory: 16 * gib, waitForStopMaximumMemory: 16 * gib).mode() == .waitForStop)
-        #expect(ChatResourcePolicy(physicalMemory: 8 * gib, waitForStopMaximumMemory: 0).mode() == .concurrent)
+        #expect(ChatResourcePolicy(physicalMemory: 8 * gib, waitForStopMaximumMemory: 8 * gib).mode() == .waitForStop)
+        #expect(ChatResourcePolicy(physicalMemory: 16 * gib, waitForStopMaximumMemory: 8 * gib).mode() == .concurrent)
     }
 
-    @Test("No Mac holds the live transcript by default; the setting holds it except where the Mac waits for Stop")
-    func policyNeverHoldsByDefault() {
-        for memory in [8 * gib, 16 * gib, 24 * gib, 64 * gib] {
-            #expect(ChatResourcePolicy(physicalMemory: memory).mode() != .holdLiveTranscript)
-        }
-        #expect(ChatResourcePolicy(physicalMemory: 16 * gib, holdsLiveTranscript: true).mode() == .holdLiveTranscript)
-        #expect(ChatResourcePolicy(physicalMemory: 8 * gib, holdsLiveTranscript: true).mode() == .waitForStop)
-    }
-
-    @Test("In hold mode, an answer during a recording holds the live transcript until the model is done")
-    func holdModeHoldsLiveTranscriptWhileAnswering() async throws {
-        let clock = TestClock()
-        let chat = try ChatHarness(policy: ChatResourcePolicy(physicalMemory: 32 * gib, holdsLiveTranscript: true))
+    @Test("With the defaults, an 8 GB Mac answers a question asked during a recording from the live transcript")
+    func eightGigabyteMacAnswersDuringRecording() async throws {
+        let chat = try ChatHarness(policy: ChatResourcePolicy(physicalMemory: 8 * gib))
         defer { chat.fix.cleanup() }
-        chat.script.streams = [ScriptedStream(["Partial ", "answer"], tokenDelay: .seconds(1), clock: clock)]
         let meetingID = try await chat.meeting()
         let engine = try await chat.startRecording(meetingID)
         try await chat.sendLiveRows(engine)
-        try await waitUntil("the rows' audio offered") { await engine.offered.count == 4 }
 
-        await chat.ask("What is on the back?", in: meetingID)
-        try await waitUntil("the hold") { chat.live.isDecodingHeld }
-        try await advanceWhenWaiting(clock)
-        try await waitUntil("streaming") { chat.status(in: meetingID) == .streaming }
-        chat.tap.mic.pushTone(seconds: 1, from: 0.5)
-        try await waitUntil("the new audio captured") { (chat.live.snapshot(includeTail: true)?.captureWatermark ?? 0) >= 1.5 - 1e-9 }
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(await engine.offered.count == 4, "the new audio waits")
-        #expect(await engine.pausedCalls == [true])
+        try await chat.askAndWait("What is on the back?", in: meetingID)
 
-        try await advanceWhenWaiting(clock)
-        try await chat.waitForAnswer(in: meetingID)
-        #expect(!chat.live.isDecodingHeld)
-        try await waitUntil("the held audio offered") { await engine.offered.count == 8 }
-        #expect(await engine.pausedCalls == [true, false])
         #expect(try chat.lastAnswer(in: meetingID).state == .complete)
-    }
-
-    @Test("In hold mode, an answer outside a recording holds nothing")
-    func holdModeHoldsNothingOutsideRecording() async throws {
-        let clock = TestClock()
-        let chat = try ChatHarness(policy: ChatResourcePolicy(physicalMemory: 32 * gib, holdsLiveTranscript: true))
-        defer { chat.fix.cleanup() }
-        chat.script.streams = [ScriptedStream(["Partial ", "answer"], tokenDelay: .seconds(1), clock: clock)]
-        let (meetingID, _) = try await chat.meetingWithTranscript()
-
-        await chat.ask("What did we decide?", in: meetingID)
-        try await advanceWhenWaiting(clock)
-        try await waitUntil("streaming") { chat.status(in: meetingID) == .streaming }
-        #expect(!chat.live.isDecodingHeld)
-        try await advanceWhenWaiting(clock)
-        try await chat.waitForAnswer(in: meetingID)
+        #expect(try await chat.storedThread(in: meetingID).messages.last?.basis == .live(through: 46))
     }
 
     @Test("During a recording, Macs under 24 GB close the model after each answer")

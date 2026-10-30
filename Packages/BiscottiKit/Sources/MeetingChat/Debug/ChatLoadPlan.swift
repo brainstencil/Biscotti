@@ -8,13 +8,11 @@
         public enum Mode: String, Decodable, Sendable {
             case concurrent
             case waitForStop
-            case holdLiveTranscript
 
             var policyMode: ChatResourcePolicy.Mode {
                 switch self {
                 case .concurrent: .concurrent
                 case .waitForStop: .waitForStop
-                case .holdLiveTranscript: .holdLiveTranscript
                 }
             }
         }
@@ -81,7 +79,6 @@
         func override(mode: Mode, closesAfterAnswer: Bool? = nil) -> ChatResourcePolicy {
             var policy = self
             policy.waitForStopMaximumMemory = mode == .waitForStop ? .max : 0
-            policy.holdsLiveTranscript = mode == .holdLiveTranscript
             if let closesAfterAnswer {
                 policy.closeAfterAnswerBelowMemory = closesAfterAnswer ? .max : 0
             }

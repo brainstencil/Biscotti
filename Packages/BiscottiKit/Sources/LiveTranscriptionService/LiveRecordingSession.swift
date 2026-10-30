@@ -86,9 +86,6 @@ final class LiveRecordingSession {
     private(set) var phase = Phase.starting
     private(set) var unavailableReason: UnavailableReason?
     private(set) var isPaused: Bool
-    /// A live hold (`LiveDecodingHold`) applies: no chunk is handed to the
-    /// engine, which is paused, and the audio waits in the pipe and the pump.
-    private(set) var isHeld: Bool
     /// Called, at most every `publishInterval`, when the transcript or status changed.
     var onChange: (@MainActor (LiveRecordingSession) -> Void)?
     var onLevel: (@MainActor (Float) -> Void)?
@@ -145,14 +142,9 @@ final class LiveRecordingSession {
     private var publishScheduled = false
     private var lastPublish: ContinuousClock.Instant?
     private var stalledTracks: Set<LiveTrack> = []
-    /// What the running engine was told, from its config or since.
-    private var enginePower: EnginePower?
-    /// The running engine may be paused for a hold: from before the pause is
-    /// sent until its resume has been.
-    private var isEngineHeld = false
+    /// The power decision the running engine has, from its config or since.
+    private var enginePower: PowerPolicy.Decision?
     private var isSyncingPower = false
-    /// Forwarders holding a chunk until a hold ends and the engine has resumed.
-    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     /// The engine's updates ended during the finish, before it was asked to
     /// finish: it failed, and nothing more will settle.
     private var engineEndedWhileFinishing = false
@@ -161,11 +153,9 @@ final class LiveRecordingSession {
     /// In-app latency, for a hardware check.
     let latency: LiveLatency
 
-    /// - Parameter isHeld: A live hold applies from the first chunk.
-    init(setup: LiveSessionSetup, latency: LiveLatency = LiveLatency(), isHeld: Bool = false) {
+    init(setup: LiveSessionSetup, latency: LiveLatency = LiveLatency()) {
         self.setup = setup
         self.latency = latency
-        self.isHeld = isHeld
         meetingID = setup.meetingID
         isPaused = setup.power.isPaused
         store = LiveTranscriptStore(sessionID: sessionID, startTime: setup.startTime, onSettledTextViolation: setup.onSettledTextViolation)
@@ -236,15 +226,12 @@ extension LiveRecordingSession {
             return
         }
         self.engine = engine
-        // Set before the forwarders wake: they check it for a hold. A new
-        // engine starts unpaused.
-        enginePower = EnginePower(power: PowerPolicy.Decision(intervalMultiplier: setup.power.intervalMultiplier, isPaused: false), isHeld: false)
-        isEngineHeld = false
         phase = .running
         resumeEngineWaiters()
         watchUpdates(of: engine, generation: generation)
         Self.log.notice("The live engine runs, generation \(generation, privacy: .public)")
         publishSoon()
+        enginePower = PowerPolicy.Decision(intervalMultiplier: setup.power.intervalMultiplier, isPaused: false)
         await syncEnginePower()
         // The language changed while the engine started.
         if setup.language != menuLanguage { await restartWithCurrentLanguage() }
@@ -477,8 +464,12 @@ extension LiveRecordingSession {
             }
             // A restart rebuilt the replay with older audio first.
             if isReplay, replayQueue[chunk.track]?.first?.startTime != chunk.startTime { return .replayRebuilt }
+            // Paused audio is dropped as one gap, so it never waits for progress.
             let isPausedNow = isPaused
-            guard await isReadyToOffer(chunk, isPaused: isPausedNow) else { continue }
+            guard isPausedNow || isWithinLead(chunk) else {
+                await waitForProgress()
+                continue
+            }
             chunk.isBackfill = isBackfill(chunk)
             offersInFlight += 1
             let taken = await engine.offer(chunk)
@@ -498,25 +489,6 @@ extension LiveRecordingSession {
         return .noEngine
     }
 
-    /// True when the chunk may be offered now. Otherwise waits for a change
-    /// and returns false, so the caller checks again: a held chunk stays in
-    /// hand until the hold ends, and any chunk until the engine has
-    /// transcribed to within the lead of it. Newer audio meanwhile waits in
-    /// the pipe and the pump. Paused audio is dropped as one gap, so it waits
-    /// for neither: the thermal pause wins over a hold.
-    private func isReadyToOffer(_ chunk: LiveAudioChunk, isPaused: Bool) async -> Bool {
-        guard !isPaused else { return true }
-        if holdsDelivery {
-            await waitForRelease()
-            return false
-        }
-        if !isWithinLead(chunk) {
-            await waitForProgress()
-            return false
-        }
-        return true
-    }
-
     /// True when this generation's engine has transcribed the chunk's track
     /// to within `engineLead` of its end, or has taken nothing of the track
     /// yet. Audio handed over while paused counts as handled.
@@ -533,22 +505,6 @@ extension LiveRecordingSession {
 
     private func waitForProgress() async {
         await withCheckedContinuation { progressWaiters.append($0) }
-    }
-
-    /// True while a hold applies, and after its release until the engine has
-    /// resumed: the worker drops audio it receives while paused, as a gap.
-    private var holdsDelivery: Bool {
-        isHeld || isEngineHeld
-    }
-
-    private func waitForRelease() async {
-        await withCheckedContinuation { releaseWaiters.append($0) }
-    }
-
-    private func resumeReleaseWaiters() {
-        let waiting = releaseWaiters
-        releaseWaiters = []
-        waiting.forEach { $0.resume() }
     }
 
     private func resumeProgressWaiters() {
@@ -727,72 +683,34 @@ extension LiveRecordingSession {
     func applyPower(_ decision: PowerPolicy.Decision) async {
         setup.power = decision
         isPaused = decision.isPaused
-        // A pause lets forwarders waiting for progress or a release hand over
-        // audio the session drops as one gap; a resume lets them check again.
+        // A pause lets forwarders waiting for progress hand over audio the
+        // session drops as one gap; a resume lets them check again.
         resumeProgressWaiters()
-        resumeReleaseWaiters()
         publishSoon()
         await syncEnginePower()
     }
 
-    /// Starts or ends a live hold: the engine is paused, and no chunk is
-    /// handed to it, until the hold ends and the engine has resumed.
-    func setHeld(_ held: Bool) {
-        guard held != isHeld, phase != .ended else { return }
-        isHeld = held
-        resumeProgressWaiters()
-        resumeReleaseWaiters()
-        publishSoon()
-        Task { [weak self] in await self?.syncEnginePower() }
-    }
-
-    /// What the engine should have: the power decision, paused while held.
-    private var targetEnginePower: EnginePower {
-        EnginePower(power: setup.power, isHeld: isHeld)
-    }
-
-    /// Brings the running engine to the latest power decision and hold. One
-    /// call runs at a time and loops until the engine has the latest, so
-    /// changes that arrive while it waits on the engine never land out of order.
+    /// Brings the running engine to the latest power decision. One call runs
+    /// at a time and loops until the engine has the latest, so decisions that
+    /// arrive while it waits on the engine never land out of order.
     private func syncEnginePower() async {
         guard !isSyncingPower else { return }
         isSyncingPower = true
         defer { isSyncingPower = false }
-        while let engine, enginePower != targetEnginePower {
+        while let engine, enginePower != setup.power {
             let generation = generation
-            let target = targetEnginePower
-            // Set before the pause may reach the engine, and cleared once its
-            // resume has: a hold released meanwhile keeps chunks back until then.
-            if target.isHeld { isEngineHeld = true }
-            if enginePower?.power.intervalMultiplier != target.power.intervalMultiplier {
-                let interval = LiveTranscriptionDefaults.updateInterval * target.power.intervalMultiplier
+            let target = setup.power
+            if enginePower?.intervalMultiplier != target.intervalMultiplier {
+                let interval = LiveTranscriptionDefaults.updateInterval * target.intervalMultiplier
                 Self.log.notice("The live engine updates every \(interval, privacy: .public) s")
                 await engine.setUpdateInterval(interval)
             }
             if enginePower?.isPaused != target.isPaused {
-                // A hold's pause comes after the chunks already on their way,
-                // which the worker would otherwise drop as paused audio.
-                if target.isPaused, !target.power.isPaused { await waitUntilNotOffering() }
                 await engine.setPaused(target.isPaused)
             }
             // A restart meanwhile gave the new engine its own starting point.
-            if generation == self.generation {
-                enginePower = target
-                if !target.isHeld { isEngineHeld = false }
-                resumeReleaseWaiters()
-            }
+            if generation == self.generation { enginePower = target }
         }
-    }
-}
-
-/// What the running engine was told: the power decision, and whether a live
-/// hold pauses it.
-private struct EnginePower: Equatable {
-    var power: PowerPolicy.Decision
-    var isHeld: Bool
-
-    var isPaused: Bool {
-        power.isPaused || isHeld
     }
 }
 
@@ -803,9 +721,6 @@ extension LiveRecordingSession {
     /// engine's last words, all under one deadline. On time-out the tail
     /// keeps what it has, marked incomplete, and the engine is cancelled.
     func finish() async -> LiveFinishResult {
-        // A hold ends with the recording: the held audio is decoded within
-        // the deadline, as any backlog.
-        setHeld(false)
         guard phase == .running, engine != nil else {
             // Starting, restarting, switching language or unavailable: no
             // engine will settle the tails the draft keeps, or the audio an
@@ -874,7 +789,6 @@ extension LiveRecordingSession {
         tasks.forEach { $0.cancel() }
         updatesTask?.cancel()
         resumeEngineWaiters()
-        resumeReleaseWaiters()
         let engines = [engine, startingEngine, endingEngine].compactMap(\.self)
         engine = nil
         startingEngine = nil

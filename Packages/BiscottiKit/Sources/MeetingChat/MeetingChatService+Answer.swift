@@ -1,7 +1,6 @@
 import DataStore
 import Foundation
 import Intelligence
-import LiveTranscriptionService
 import LocalLLM
 
 /// The answer being written: its question, what the model was given, and the
@@ -68,26 +67,14 @@ struct NoChatTranscript: Error {}
 
 extension MeetingChatService {
     func runAnswer(_ run: AnswerRun) async {
-        // Any recording, not only this meeting's: the policy is about memory,
-        // and the live transcript is the recording's.
+        // Any recording, not only this meeting's: the policy is about memory.
         let isRecording = recordingMeetingID() != nil
-        let mode = policy.mode()
-        if isRecording, run.mayWaitForRecording, mode == .waitForStop {
+        if isRecording, run.mayWaitForRecording, policy.mode() == .waitForStop {
             park(run)
             return
         }
-        let hold = isRecording && mode == .holdLiveTranscript ? holdLiveTranscript() : nil
         let outcome = await answerOutcome(run, isRecording: isRecording)
-        // Released before the save, once the model is done.
-        hold?.release()
         await finish(run, outcome)
-    }
-
-    /// Holds the live transcript while the answer is written: from before the
-    /// model loads to the end of its stream.
-    private func holdLiveTranscript() -> LiveDecodingHold {
-        logger.info("Policy holdLiveTranscript: the live transcript waits while the answer is written")
-        return live.holdDecoding(reason: Self.leasePurpose)
     }
 
     private func park(_ run: AnswerRun) {

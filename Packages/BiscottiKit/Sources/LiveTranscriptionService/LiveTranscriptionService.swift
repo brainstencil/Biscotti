@@ -128,10 +128,6 @@ public final class LiveTranscriptionService {
     @ObservationIgnored private var draftWriters: [UUID: ObjectIdentifier] = [:]
     @ObservationIgnored private var download: Task<Void, Never>?
     @ObservationIgnored private var downloadToken = UUID()
-    /// Live holds not yet released (`holdDecoding(reason:maximum:)`).
-    @ObservationIgnored private var holds: [ObjectIdentifier: LiveDecodingHold] = [:]
-    /// When the first of the current holds was taken.
-    @ObservationIgnored private var heldSince: ContinuousClock.Instant?
 
     /// - Parameters:
     ///   - engine: Makes one engine session per generation.
@@ -223,8 +219,6 @@ public final class LiveTranscriptionService {
     public func stop(_ meetingID: UUID) -> Task<LiveFinishResult, Never> {
         guard recording?.meetingID == meetingID else { return Task { .nothingToFinish } }
         recording = nil
-        // The session's finish decodes the held audio; a later release does nothing.
-        dropHolds(because: "the recording stopped")
         guard let session = current else {
             resetLiveState()
             return Task { .nothingToFinish }
@@ -309,7 +303,7 @@ public final class LiveTranscriptionService {
             power: power?.decision ?? PowerPolicy.Decision(PowerState()),
             onSettledTextViolation: onSettledTextViolation,
             resetWorker: { [weak self] in await self?.onWorkerNeedsReset?() }
-        ), isHeld: isDecodingHeld)
+        ))
         session.onChange = { [weak self] in self?.sessionDidChange($0) }
         session.onLevel = { [weak self, weak session] level in
             guard let self, let session, session === current else { return }
@@ -344,6 +338,14 @@ public final class LiveTranscriptionService {
         guard draftWriters[session.meetingID] == ObjectIdentifier(session) else { return }
         let draft = session.store.snapshot(includeTail: true)
         drafts[session.meetingID] = draft.rows.isEmpty ? nil : draft
+    }
+
+    private func cancelFinishingSessions() async {
+        let sessions = Array(finishing.values)
+        finishing = [:]
+        for session in sessions {
+            await session.cancel()
+        }
     }
 
     private func resetLiveState() {
@@ -400,77 +402,6 @@ extension LiveTranscriptionService {
         if current?.unavailableReason == .modelMissing { current = nil }
         let now = recording.now
         await startSession(from: now, marker: now)
-    }
-}
-
-// MARK: - Holds
-
-public extension LiveTranscriptionService {
-    /// Stops handing audio to the live engine and pauses its decoding until
-    /// every hold is released. Audio keeps arriving and waits in the session's
-    /// pipe and pump (up to `LiveAudioLimits.pumpBacklog`, 15 minutes per
-    /// track), then is handed over as backfill, so the transcript catches up
-    /// with no gap. Holds also apply to a session that starts while they are
-    /// held. A recording's Stop drops every hold, so its finish decodes the
-    /// held audio.
-    ///
-    /// - Parameter maximum: A safety limit: a hold still held then is
-    ///   released, with an error line.
-    func holdDecoding(reason: String, maximum: Duration = .seconds(120)) -> LiveDecodingHold {
-        let hold = LiveDecodingHold(reason: reason) { [weak self] in self?.holdReleased($0) }
-        hold.timeout = Task { [weak hold] in
-            do { try await Task.sleep(for: maximum) } catch { return }
-            guard let hold, !hold.isReleased else { return }
-            Self.log.error("A live hold (\(hold.reason, privacy: .public)) was still held after \(maximum, privacy: .public); releasing it")
-            hold.release()
-        }
-        let wasHeld = isDecodingHeld
-        holds[ObjectIdentifier(hold)] = hold
-        if !wasHeld {
-            heldSince = .now
-            Self.log.notice("Live decoding held (\(reason, privacy: .public))")
-            current?.setHeld(true)
-        }
-        return hold
-    }
-
-    /// True while at least one hold is held. For tests and logging.
-    var isDecodingHeld: Bool {
-        !holds.isEmpty
-    }
-}
-
-extension LiveTranscriptionService {
-    /// Out of the class body, which SwiftLint keeps to 250 lines.
-    private func cancelFinishingSessions() async {
-        let sessions = Array(finishing.values)
-        finishing = [:]
-        for session in sessions {
-            await session.cancel()
-        }
-    }
-
-    private func holdReleased(_ hold: LiveDecodingHold) {
-        guard holds.removeValue(forKey: ObjectIdentifier(hold)) != nil, holds.isEmpty else { return }
-        resumeDecoding()
-    }
-
-    /// Ends every hold without its holder: a later release does nothing.
-    private func dropHolds(because reason: String) {
-        guard !holds.isEmpty else { return }
-        holds.values.forEach { $0.invalidate() }
-        holds = [:]
-        resumeDecoding(note: " (\(reason))")
-    }
-
-    /// Logs how long decoding was held and how far behind the live text is
-    /// (`Tools/chat_bench/analyze.py` reads the line), then resumes it.
-    private func resumeDecoding(note: String = "") {
-        let held = heldSince.map { String(format: "%.1f", (ContinuousClock.now - $0) / .seconds(1)) } ?? "?"
-        heldSince = nil
-        let behind = current?.store.lag.map { String(format: ", %.1f s behind", $0) } ?? ""
-        Self.log.notice("Live decoding resumes after a \(held, privacy: .public) s hold\(behind, privacy: .public)\(note, privacy: .public)")
-        current?.setHeld(false)
     }
 }
 

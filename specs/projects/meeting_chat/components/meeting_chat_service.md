@@ -165,7 +165,7 @@ Phase 10 added: a pass that saves a transcript reports it through `Transcription
 public struct ChatResourcePolicy: Sendable, Equatable {
     public enum Mode: Sendable, Equatable { case concurrent, waitForStop }
     public var physicalMemory: UInt64
-    // Set by the measurement phase (see research/chat_measurement). Default until then:
+    // 0 after the measurement (research/chat_measurement; Backlog decision B4):
     public var waitForStopMaximumMemory: UInt64 = 0          // no Mac waits
     public var closeAfterAnswerBelowMemory: UInt64 = 24 << 30
     public var idleKeepAlive: Duration = .seconds(180)
@@ -176,9 +176,9 @@ public struct ChatResourcePolicy: Sendable, Equatable {
 }
 ```
 
-- `mode()`: memory ≤ `waitForStopMaximumMemory` → `.waitForStop`; otherwise `.concurrent`. Outside a recording the mode is irrelevant.
+- `mode()`: memory ≤ `waitForStopMaximumMemory` → `.waitForStop`; otherwise `.concurrent`. Outside a recording the mode is irrelevant. With the default of 0 every Mac, 8 GB Macs included, gets `.concurrent`: there is no wait for Stop. Only an explicit limit (the tests, or the chat load driver's `waitForStop` plan mode) gives `.waitForStop`.
 - `keepAlive(isRecording:)`: during a recording, on a Mac with less than `closeAfterAnswerBelowMemory`, `.close`, so the AI model's memory is free for the rest of the meeting. Otherwise `.keepOpen(idleKeepAlive)`.
-- The live transcript is never paused for chat in this version. If the measurement shows answers stall the live text or trip its watchdog, the [live hold](live_hold.md) is built and a third mode, `.holdLiveTranscript`, takes a hold for the length of each answer during a recording.
+- The live transcript is never paused for chat. Phase 7 built the [live hold](live_hold.md) and a third mode, `.holdLiveTranscript`, switched off on every Mac; Backlog decision B5 removed both. Answers run beside the live transcript on every Mac.
 
 ### Logging
 
@@ -216,6 +216,7 @@ Threads:
 
 Policy:
 - `policyDefaultsToConcurrent`: 8, 16 and 64 GB all give `.concurrent` with the defaults; with `waitForStopMaximumMemory` = 8 GB, 8 GB gives `.waitForStop` and 16 GB `.concurrent`.
+- `eightGigabyteMacAnswersDuringRecording`: with the defaults, an 8 GB Mac answers a question asked during a recording from the live snapshot, without waiting for Stop.
 - `liveTranscriptNotPausedWhileAnswering`: during a recording, the fake live engine keeps receiving chunks while an answer streams.
 - `waitForStopParksQuestion`: in wait mode, the question waits with `.waitingForRecordingToEnd` and is answered from the draft after `recordingDidStop`.
 - `closeAfterAnswerWhileRecordingOnSmallMac`: during a recording, the lease's keep-alive is `.close` on 16 GB and `.keepOpen(180 s)` on 32 GB; outside a recording it is `.keepOpen(180 s)` on both.

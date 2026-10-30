@@ -4,11 +4,11 @@ Results of the chat measurement ([components/chat_measurement.md](../../componen
 
 ## Summary
 
-- **Contention: the default fails on the Low Power Mode run.** That run stands in for a slower chip. One live decode inside an answer took 5.16 s, over the rule's 5 s limit, so the contention rule fails, and phase 7 (the live hold, and the higher-watchdog-limit remedy) applies. There was no watchdog reset, and the live transcript caught up at once after every answer. At normal power both concurrent runs pass: `concurrent-e2b` (longest decode in an answer 3.25 s) and `concurrent-12b` (2.83 s), with no reset and a catch-up of 0 s after every answer.
+- **Contention: the default fails on the Low Power Mode run.** That run stands in for a slower chip. One live decode inside an answer took 5.16 s, over the rule's 5 s limit, so the contention rule fails, and phase 7 (the live hold, and the higher-watchdog-limit remedy) applies. There was no watchdog reset, and the live transcript caught up at once after every answer. At normal power both concurrent runs pass: `concurrent-e2b` (longest decode in an answer 3.25 s) and `concurrent-12b` (2.83 s), with no reset and a catch-up of 0 s after every answer. **Decided 29 October 2026 (Backlog decision B5):** the failure is accepted with no remedy, and answers run beside the live transcript on every Mac.
 - **Memory:** 16 GB Macs (E2B) and 24 GB Macs (12B) fit their budgets with room to spare, so chat runs during recordings there. 8 GB Macs (E2B) peaked at 2.96 GB against a 3 GB budget. That passes the rule by 0.04 GB, less than the figure's known error.
-- **Thresholds, proposed for the user's review:** `ChatResourcePolicy.waitForStopMaximumMemory` is 8 GB (it was 0), so 8 GB Macs answer after Stop. This departs from the rule, which would let them answer during recordings; see [Memory against each tier's budget](#memory-against-each-tiers-budget). `closeAfterAnswerBelowMemory` stays at 24 GB.
+- **Thresholds, decided 29 October 2026 (Backlog decision B4):** `ChatResourcePolicy.waitForStopMaximumMemory` stays 0, as the rule says, so 8 GB Macs answer during recordings once the user turns their live transcript on. Phase 6 had proposed 8 GB, which made those Macs answer only after Stop; see [Memory against each tier's budget](#memory-against-each-tiers-budget). `closeAfterAnswerBelowMemory` stays at 24 GB.
 - **Not run here:** `make test-ai`, which is for the user.
-- **Phase 7 (remedies):** the live hold and the `.holdLiveTranscript` mode are built, off on every Mac. The held run with Low Power Mode on (`lowpower-e2b-hold`) has not run: Low Power Mode was not turned on within the 3 hours the run waited. The higher watchdog limit is estimated from the phase 6 runs: the three runs with live decodes inside answers all pass against a 20 s limit while answering. The user chooses among the hold, the higher limit and no change; see [Phase 7: remedies](#phase-7-remedies).
+- **Phase 7 (remedies):** phase 7 built the live hold and the `.holdLiveTranscript` mode, off on every Mac. The held run with Low Power Mode on (`lowpower-e2b-hold`) never ran: Low Power Mode was not turned on within the 3 hours the run waited. The higher watchdog limit was estimated from the phase 6 runs: the three runs with live decodes inside answers all pass against a 20 s limit while answering. The user chose no change (B5), so the hold was removed and the higher limit is not built; see [Phase 7: remedies](#phase-7-remedies).
 
 ## Hardware and software
 
@@ -227,15 +227,17 @@ The budget is the Mac's memory minus 5 GB. The rule's figure is the sum of the f
 
 | Tier | Model there | Budget | Peak during the recording | Decision |
 |---|---|---|---|---|
-| 8 GB | E2B | 3 GB | 2.96 GB (`concurrent-e2b`); 3.04 GB with Low Power Mode on | **Proposed: wait for Stop** (`waitForStopMaximumMemory` = 8 GB). The rule says chat runs during recordings |
+| 8 GB | E2B | 3 GB | 2.96 GB (`concurrent-e2b`); 3.04 GB with Low Power Mode on | Chat runs during recordings, as the rule says (decided 29 October 2026; phase 6 had proposed waiting for Stop) |
 | 16 GB | E2B | 11 GB | 2.96 GB (`concurrent-e2b`) | Chat runs during recordings |
 | 24 GB | 12B | 19 GB | 9.78 GB (`concurrent-12b`) | Chat runs during recordings |
 
-**The 8 GB tier departs from the decision rule, and waits for the user's review.** By the rule, 2.96 GB is under 3 GB, so 8 GB Macs would answer during recordings. The proposal makes them wait for Stop:
+**The 8 GB tier follows the decision rule (Backlog decision B4, 29 October 2026).** By the rule, 2.96 GB is under 3 GB, so 8 GB Macs answer during recordings. Phase 6 proposed making them wait for Stop anyway, for these reasons:
 
 - The margin is 0.04 GB (1.4%), and the figure undercounts by more than that. The speech worker's footprint was 0.08 to 0.12 GB, but the live Whisper model is mostly memory that the Neural Engine wires outside the process. The app measured it at about 0.2 to 0.3 GB when it chose to keep the live model loaded (25 October 2026).
 - Samples are one second apart, so a shorter peak is missed. With Low Power Mode on, the same plan peaked at 3.04 GB, over the budget.
 - An 8 GB Mac starts with the live transcript off (`liveTranscriptMemoryLimit`), so chat during a recording there needs the user to turn the live transcript on first. Waiting for Stop costs those Macs little.
+
+The user chose the rule: a user who turns the live transcript on for an 8 GB Mac gets chat during recordings, with no further wait. `waitForStopMaximumMemory` stays 0. The live transcript's own default, off on Macs with 8 GB or less (`liveTranscriptMemoryLimit`), does not change.
 
 The figures for 8 GB and 16 GB Macs are estimates from this Mac. A run on such a Mac would replace them. The speech worker and the app need the same memory on any Apple-silicon Mac, and the AI worker's figure is the model file, mapped.
 
@@ -251,22 +253,17 @@ What the data says for that choice:
 
 ## Phase 7: remedies
 
-Phase 7 built the [live hold](../../components/live_hold.md) and the `.holdLiveTranscript` mode, and estimated the other remedy, a higher watchdog limit while an answer runs. **The policy's default does not change:** `ChatResourcePolicy.holdsLiveTranscript` is false on every Mac, so no tier holds the live transcript until the user chooses a remedy. Only the chat load driver turns it on, through a plan's `mode`. `Packages/Transcription` does not change.
+**Decided 29 October 2026 (Backlog decision B5): no remedy.** The user chose option 3, no change ([The options](#the-options)). Answers run beside the live transcript on every Mac. The live hold was removed: `LiveDecodingHold` and `holdDecoding`, the `.holdLiveTranscript` mode, the `concurrent-e2b-hold` plan, the held-run analysis in `analyze.py` (its hold rows and its decode limit for the 30 s after answers) and their tests. The higher watchdog limit is not built. The rest of this section is the record the choice was made from; the figures do not change.
 
-What the hold does: from before an answer's model loads to the end of its stream, the live transcript hands no audio to its engine and pauses the engine's decoding. The audio waits in the app (up to 15 minutes per track), then is decoded as backfill once the answer is done, so the live text catches up with no gap. The thermal pause still wins over a hold and drops audio as before. A Stop ends every hold, and the live transcript's finish decodes the held audio within its 10 s stop deadline, as for any backlog, while the answer keeps running. Held audio it cannot decode in time is a gap in the draft; the final pass still transcribes it.
+Phase 7 built the [live hold](../../components/live_hold.md) and the `.holdLiveTranscript` mode, and estimated the other remedy, a higher watchdog limit while an answer runs. **The policy's default did not change:** `ChatResourcePolicy.holdsLiveTranscript` was false on every Mac, so no tier held the live transcript. Only the chat load driver turned it on, through a plan's `mode`. `Packages/Transcription` did not change.
 
-### The hold with Low Power Mode on (not run)
+What the hold did: from before an answer's model loaded to the end of its stream, the live transcript handed no audio to its engine and paused the engine's decoding. The audio waited in the app (up to 15 minutes per track), then was decoded as backfill once the answer was done, so the live text caught up with no gap. The thermal pause still won over a hold and dropped audio as before. A Stop ended every hold, and the live transcript's finish decoded the held audio within its 10 s stop deadline, as for any backlog, while the answer kept running. Held audio it could not decode in time was a gap in the draft; the final pass still transcribed it.
 
-The held run repeats the failing condition: the `concurrent-e2b` questions with the hold (plan `concurrent-e2b-hold`, mode `holdLiveTranscript`), Gemma 4 E2B closed after each answer, Low Power Mode on. **It has not run.** The run waited from 20:31 to 23:31 on 28 October for `pmset` powermode 1, and Low Power Mode was not turned on. The build is ready in `DerivedData/Development-meeting-chat` (signed with the Apple Development certificate since the merge of `codex/development-isolation`, at 8835583 plus the phase 7 changes). With Low Power Mode on, run:
+### The hold with Low Power Mode on (never run)
 
-```sh
-# From the repository root, with Low Power Mode on:
-export BISCOTTI_DEV_DERIVED_DATA=/Volumes/Data/projects/Developer/biscotti/DerivedData/Development-meeting-chat
-make build-development   # only if any source changed since this build
-Tools/chat_bench/run.sh lowpower-e2b-hold concurrent-e2b-hold
-```
+The held run was to repeat the failing condition: the `concurrent-e2b` questions with the hold (plan `concurrent-e2b-hold`, mode `holdLiveTranscript`), Gemma 4 E2B closed after each answer, Low Power Mode on. **It never ran.** The run waited from 20:31 to 23:31 on 28 October for `pmset` powermode 1, and Low Power Mode was not turned on. Decision B5 then removed the hold and its plan.
 
-What the run will report, next to `lowpower-e2b`. The `lowpower-e2b` figures marked * come from its capture, analyzed again with the phase 7 `analyze.py`; the phase 6 figures do not change:
+What the run would have reported, next to `lowpower-e2b`. The `lowpower-e2b` figures marked * come from its capture, analyzed again with the phase 7 `analyze.py` (the row for the 30 s after answers came from the held-run analysis, since removed); the phase 6 figures do not change:
 
 | Measure | `lowpower-e2b` (phase 6, no hold) | `lowpower-e2b-hold` |
 |---|---|---|
@@ -281,16 +278,16 @@ What the run will report, next to `lowpower-e2b`. The `lowpower-e2b` figures mar
 | Ask to done per answer | 11.8 to 26.1 s | not run |
 | Tokens per second | median 49.0 | not run |
 
-What the held run measures, and how the rule applies to it (`Tools/chat_bench/README.md`, "A held run"):
+What the held run would have measured, and how the rule would have applied to it:
 
-- **How far the live text falls behind during each answer.** The table's "Live hold per answer" row gives each hold's length and how far behind the live text was when it ended. A hold lasts from the ask to the end of the stream, so `lowpower-e2b`'s answers point to holds of about 12 to 26 s. Every one of those is over 10 s, so the drawer would show "Catching up…" during each answer. This is an expectation from phase 6, not a measurement.
+- **How far the live text falls behind during each answer.** The analysis's "Live hold per answer" row (removed with the hold) would have given each hold's length and how far behind the live text was when it ended. A hold lasts from the ask to the end of the stream, so `lowpower-e2b`'s answers point to holds of about 12 to 26 s. Every one of those is over 10 s, so the drawer would show "Catching up…" during each answer. This is an expectation from phase 6, not a measurement.
 - **The catch-up after each answer:** from the answer's end until the live transcript reports Live again. The rule's limit is a median under 30 s.
 - **Whether any audio or text was lost:** the live session's gaps at its end, rejected live updates, and the finish after Stop. A hold should leave no gap.
 - **Decodes.** No decode can start inside a held window, so for a held run the rule's 5 s decode limit covers the decodes inside the answer windows (only one already running when the hold began) and the decodes that start in the 30 s after each answer, where the held audio is decoded as backfill. Watchdog resets apply unchanged.
 
 ### The higher watchdog limit while an answer runs
 
-This remedy changes no decode, so it needs no new run: it changes the limit the decodes are judged against. The transcription worker's watchdog (`LiveWorkerLimits.stuckDecode`, 10 s) acts only when a live session ends, at a Stop or a language change. A decode still running 10 s after that counts as stuck, and the worker ends itself so that the final pass starts in a fresh one. The contention rule's 5 s is half of that limit. With the limit raised to 20 s while an answer runs, the rule's limit inside answers would be 10 s.
+This remedy changes no decode, so it needs no new run: it changes the limit the decodes are judged against. The transcription worker's watchdog (`LiveWorkerLimits.stuckDecode`, 10 s) acts only when a live session ends, for example at a Stop or a language change. A decode still running 10 s after that counts as stuck, and the worker ends itself so that the final pass starts in a fresh one. The contention rule's 5 s is half of that limit. With the limit raised to 20 s while an answer runs, the rule's limit inside answers would be 10 s.
 
 | Run | Longest decode inside answers | Against 5 s (today) | Against 10 s (limit raised to 20 s) | Resets |
 |---|---|---|---|---|
@@ -311,7 +308,7 @@ What it would cost:
 
 ### The options
 
-The user chooses one. This phase does not choose; the manager records the choice for the user's review.
+Phase 7 did not choose. The user chose option 3, no change, on 29 October 2026 (Backlog decision B5).
 
 1. **The hold on slower Macs.** Turn `holdsLiveTranscript` on for the Macs that need it. That also needs a rule for "slower", because the policy knows only the Mac's memory. What it does: no live decode starts while an answer is written (only one already running when the hold begins overlaps it), so the answer's load moves to the catch-up after it. What it costs: the live text stops during each answer and is about the answer's length behind at its end (about 12 to 26 s in `lowpower-e2b`'s conditions), then catches up with no audio lost. A Stop during an answer is the exception: the finish has 10 s for the held audio, and what it cannot decode is missing from the draft (and from chat answers made from it) until the final pass. No change to `Packages/Transcription`, and no manual tests are reset. Its figures in the failing condition are not measured yet: the held run above needs Low Power Mode on.
 2. **The higher watchdog limit while an answer runs.** Raise the limit, for example to 20 s, for a session that ends during an answer. What it does: the three phase 6 runs with live decodes inside answers pass against it, `lowpower-e2b` by 4.84 s. What it costs: the `Packages/Transcription` change, the `tx_*` manual tests reset and run again, and a stuck decode found up to 10 s later when a recording stops during an answer. The live text keeps updating during answers, as now.
@@ -328,9 +325,11 @@ The user chooses one. This phase does not choose; the manager records the choice
 
 ## What remains
 
+Decided on 29 October 2026, in the Backlog phase:
+
+- **B4, the 8 GB proposal:** not taken. `waitForStopMaximumMemory` stays 0, so 8 GB Macs answer during recordings once the user turns their live transcript on.
+- **B5, contention:** no remedy. Answers run beside the live transcript on every Mac, the live hold was removed, and the held run (`lowpower-e2b-hold`) will not run.
+
 For the user:
 
-- **Review the 8 GB proposal** above. The strict reading of the rule (2.96 GB under 3 GB) lets 8 GB Macs answer during recordings.
-- **Turn Low Power Mode on for the held run** (`lowpower-e2b-hold`, see [The hold with Low Power Mode on](#the-hold-with-low-power-mode-on-not-run)), so the hold's figures stand next to `lowpower-e2b`'s.
-- **Choose how to proceed on contention:** the hold on slower Macs, the higher watchdog limit while answering, or no change ([The options](#the-options)).
 - **Run `make test-ai`**, which includes the `MeetingChatAITests` suite.

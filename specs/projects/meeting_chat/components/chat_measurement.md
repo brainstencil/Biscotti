@@ -73,6 +73,10 @@ Otherwise the contingency starts:
 
 The user chooses between the two with those numbers.
 
+**Outcome (decided 29 October 2026, in the Backlog phase).**
+- **Memory (B4):** every tier passes the rule with its model, 8 GB included (Gemma 4 E2B peaked at 2.96 GB against 3 GB). `waitForStopMaximumMemory` stays 0, so 8 GB Macs answer during recordings once the user turns their live transcript on. Phase 6 had proposed making them wait for Stop anyway, because the margin was smaller than the figure's known error; the user chose the rule.
+- **Contention (B5):** the rule's one failure, a 5.16 s decode inside an answer with Low Power Mode on, is accepted with no remedy. There was no watchdog reset, and the catch-up was 0 s after every answer. The live hold that phase 7 built is removed, and the higher watchdog limit is not built. Answers run beside the live transcript on every Mac.
+
 The results, the chosen thresholds, the hardware and the model versions are recorded in `specs/projects/meeting_chat/research/chat_measurement/README.md`, and the thresholds replace `ChatResourcePolicy`'s defaults.
 
 ## Test Plan

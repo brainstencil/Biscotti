@@ -4,6 +4,8 @@ status: complete
 
 # Component: Live hold
 
+> **Not built: removed by Backlog decision B5 (29 October 2026).** Phase 7 built this design, switched off on every Mac, as one of the remedies for the chat measurement's contention result. The user chose no remedy: answers run beside the live transcript on every Mac. The hold, the `.holdLiveTranscript` mode, the `concurrent-e2b-hold` plan, the held-run analysis and their tests were removed. This doc is kept as a record of the design; see [research/chat_measurement](../research/chat_measurement/README.md#phase-7-remedies).
+
 > **Contingency, not built by default.** Chat runs beside the live transcript, which falls behind and catches up on its own (decided 27 October 2026). This design is built only if the [chat measurement](chat_measurement.md#decision-rule) shows answers trip the live transcript's stuck-decode watchdog, stall a single decode for 5 s or more, or leave the live text more than 30 s behind. It saves no memory: the live speech model stays loaded while held.
 
 ## Purpose and Scope

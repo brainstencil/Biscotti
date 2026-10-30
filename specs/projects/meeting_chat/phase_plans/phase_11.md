@@ -67,12 +67,15 @@ Nothing in `Packages/Transcription`, `AudioCapture`, `LocalLLM` or `MCPServer` c
    - Each changed spec artifact keeps `status: complete`.
 7. **Close-out.** `backlog.md`: tick B3 and add its `**Status:** closed` line with this run's commit subject. Check that B1 to B3 are all closed. At the commit invocation, after review: tick Phase 11 in `implementation_plan.md` and set this plan to `status: complete`.
 
-## Pending hardware checks
+## Hardware checks
 
-These are checked on hardware by the manager with the user after this run. They are not passed yet:
+Checked on hardware on 2026-10-30, on the build at 2b78b5e, with three recordings. The test audio was the soak fixture (`live_bench/fixtures/soak/mixed.wav`), played through the Mac's muted speakers. All checks passed:
 
-- **Run 2's catch-up:** turning the live transcript on mid-recording (from chat's Turn On and from Settings) fills the drawer from 0:00 with "Catching up…", then continues live; chat answers from what is transcribed so far.
-- **B6a:** Stop & Save with the chat card open and no answer running opens the meeting page with the card closed and the band reading "Continue chat"; one click reopens the thread. With an answer running, the card stays open.
+- **Run 2's catch-up from chat's Turn On:** Turn On at 3:11 into a recording showed no start marker. The status went Starting, then "Catching up…", then Live, and the drawer's first row is the audio at the recording's 0:00. The log has "Live transcription starting mid-recording, catching up from 0:00" and "The live catch-up read the mic file from 0:00 through 196.53 s". The first chat answer cites 1:01, which is from before Turn On.
+- **Run 2's catch-up from Settings:** turning the live transcript on in Settings at 4:47 into a recording started the same catch-up from 0:00. A question asked during the catch-up got an answer that ends "Based on the transcript through 0:28".
+- **Run 2's Stop during the catch-up:** Stop during the catch-up logged "Stop during the live catch-up: mic, system stop reading the recording files; the rest is not transcribed live" and "Live finish after Stop: finished in 1.28 s". The Transcript tab ends with "Not transcribed live · 1:22".
+- **B6a:** Stop & Save with the card open and no answer running opened the meeting page with the card closed and the band reading "Continue chat". This was checked in two recordings, and one click reopened the thread. Stop & Save during an answer ("Thinking…") kept the card open on the meeting page, and the answer finished there.
+- **B6e-1:** the history bubbles draw in both reopened threads.
 
 ## Tests
 

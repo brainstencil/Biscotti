@@ -11,12 +11,15 @@ import Foundation
 /// at the window's top (the meeting page), and was off by the list's origin
 /// in the recording drawer (meeting chat phase 10 hardware check F14).
 ///
-/// Measured on macOS (meeting chat phase 10, hardware re-check 3): the
-/// List's own frame excludes the content insets, the areas under the
-/// toolbar and the pinned bottom. On the meeting page it was 52 pt down the
-/// window and 206 pt high in a 1290 pt scroll view with insets of 52 and
-/// 1032 pt. So the scroll view's top in the window is the list's top less
-/// the top inset, and rows are read against that.
+/// Measured on macOS 26.6.2 (25G83) (meeting chat phase 10, hardware
+/// re-check 3): the List's own frame excludes the content insets, the areas
+/// under the toolbar and the pinned bottom. On the meeting page it was 52 pt
+/// down the window and 206 pt high in a 1290 pt scroll view with insets of
+/// 52 and 1032 pt. So the scroll view's top in the window is the list's top
+/// less the top inset, and rows are read against that. The app supports
+/// macOS 15 and later, where SwiftUI may lay the List out otherwise: a List
+/// as high as its scroll view is taken to be the scroll container itself,
+/// and rows are read against its top.
 ///
 /// The `List` spike showed that `onAppear`/`onDisappear` overscan by one or
 /// two rows above the visible area, so appearance cannot tell which row is
@@ -60,8 +63,17 @@ final class VisibleRowTracker {
 
     /// The scroll view's top in the window: the list's top less the top
     /// inset; 0 until the list has reported its frame.
+    ///
+    /// The List's frame is taken to exclude the insets when it is shorter or
+    /// taller than the scroll view (more than half a point apart), as
+    /// measured on macOS 26.6.2; when it is as high, it is the scroll
+    /// container, and its top is the scroll view's. Before the first scroll
+    /// sample the scroll view's height is unknown, and so is the top inset
+    /// (0): rows are read against the list's top.
     private var scrollViewTop: CGFloat {
-        listFrame.map { $0.minY - insetTop } ?? 0
+        guard let listFrame else { return 0 }
+        guard viewportHeight.isFinite, abs(listFrame.height - viewportHeight) > 0.5 else { return listFrame.minY }
+        return listFrame.minY - insetTop
     }
 
     /// A row's frame in the scroll view's space: y = 0 at its top edge.

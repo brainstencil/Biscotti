@@ -61,11 +61,9 @@ extension AppCore {
     }
 
     /// Chat's "Turn On" while the live transcript is off: the same as the
-    /// Settings toggle. The setting is saved and live transcription starts
-    /// from now, with a start marker. The recording before that moment gets
-    /// no live text, so chat cannot answer about it until the final
-    /// transcript is saved. (The functional spec has the live transcript
-    /// catch up from the start of the recording; it does not.)
+    /// Settings toggle. The setting is saved and live transcription starts,
+    /// catching up from the start of the recording as any start mid-recording
+    /// does. Chat answers from what it has transcribed so far.
     private func turnOnLiveTranscriptForChat() async {
         do {
             try await store.updateSettings { $0.liveTranscriptEnabled = true }

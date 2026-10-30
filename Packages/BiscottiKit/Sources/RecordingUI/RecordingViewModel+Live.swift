@@ -134,7 +134,10 @@ public extension RecordingViewModel {
     }
 
     /// The drawer's two lines while a live start is slow. Chosen by the user
-    /// on 25 October 2026: say so when low disk space is why.
+    /// on 25 October 2026: say so when low disk space is why. Every start
+    /// catches up from the start of the recording: one with the recording
+    /// from the audio held meanwhile, one mid-recording from the recording's
+    /// files (meeting_chat backlog B2).
     static func slowStartMessages(lowOnDisk: Bool) -> [String] {
         if lowOnDisk {
             [

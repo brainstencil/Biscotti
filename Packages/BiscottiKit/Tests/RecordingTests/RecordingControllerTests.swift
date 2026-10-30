@@ -130,6 +130,24 @@ struct RecordingStartStopTests {
         #expect(fix.controller.recordingMeetingID == nil)
     }
 
+    @Test("The recording's track files are known while it records, for the live transcript's catch-up")
+    @MainActor
+    func capturePathsAreKnownWhileRecording() async throws {
+        let fix = try makeFixture()
+        defer { fix.cleanup() }
+        #expect(fix.controller.capturePaths == nil)
+
+        await fix.controller.start()
+        let meetingID = try #require(fix.controller.state.meetingID)
+        let paths = try #require(fix.controller.capturePaths)
+        let folder = fix.storageRoot.appendingPathComponent(meetingID.uuidString)
+        #expect(paths.micAAC == folder.appendingPathComponent("mic.aac"))
+        #expect(paths.systemAAC == folder.appendingPathComponent("system.aac"))
+
+        _ = await fix.controller.stop()
+        #expect(fix.controller.capturePaths == nil)
+    }
+
     @Test("Start with an explicit title uses it for the created meeting")
     @MainActor
     func startWithTitleCreatesTitledMeeting() async throws {

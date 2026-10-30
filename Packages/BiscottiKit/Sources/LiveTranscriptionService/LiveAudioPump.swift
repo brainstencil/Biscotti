@@ -6,13 +6,22 @@ import Synchronization
 /// Carries the pump's chunks to the engine, one stream per track so a track
 /// that waits does not hold up the other, with at most `limit` chunks per
 /// track queued or in flight (2 s of audio). A chunk the pipe refuses waits
-/// in the pump (`LivePumpCore.retention`) and is offered again.
+/// in the pump (`LivePumpCore.retention`) and is offered again. A catch-up
+/// from the recording's files queues its chunks with `send`, which waits for
+/// a free slot instead.
 final class LiveChunkPipe: Sendable {
     static let limit = 8
 
+    private struct Slots {
+        var inFlight: [LiveTrack: Int] = [:]
+        /// Senders waiting for a slot of their track.
+        var waiters: [LiveTrack: [CheckedContinuation<Void, Never>]] = [:]
+        var isFinished = false
+    }
+
     let tracks: [LiveTrack]
     private let streams: [LiveTrack: (stream: AsyncStream<LiveAudioChunk>, continuation: AsyncStream<LiveAudioChunk>.Continuation)]
-    private let inFlight = Mutex<[LiveTrack: Int]>([:])
+    private let slots = Mutex(Slots())
 
     init(tracks: [LiveTrack] = [.mic, .system]) {
         self.tracks = tracks
@@ -31,9 +40,9 @@ final class LiveChunkPipe: Sendable {
     func offer(_ chunk: LiveAudioChunk) -> Bool {
         let track = chunk.track
         guard let continuation = streams[track]?.continuation else { return false }
-        let taken = inFlight.withLock { counts in
-            guard counts[track, default: 0] < Self.limit else { return false }
-            counts[track, default: 0] += 1
+        let taken = slots.withLock { slots in
+            guard slots.inFlight[track, default: 0] < Self.limit else { return false }
+            slots.inFlight[track, default: 0] += 1
             return true
         }
         guard taken else { return false }
@@ -44,16 +53,59 @@ final class LiveChunkPipe: Sendable {
         return true
     }
 
+    /// Queues a chunk, waiting while its track has `limit` chunks queued or
+    /// in flight. Returns false once the pipe is finished or the task is
+    /// cancelled.
+    func send(_ chunk: LiveAudioChunk) async -> Bool {
+        let track = chunk.track
+        guard streams[track] != nil else { return false }
+        while !Task.isCancelled {
+            if offer(chunk) { return true }
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    let waits = slots.withLock { slots in
+                        guard !slots.isFinished, !Task.isCancelled, slots.inFlight[track, default: 0] >= Self.limit else { return false }
+                        slots.waiters[track, default: []].append(continuation)
+                        return true
+                    }
+                    if !waits { continuation.resume() }
+                }
+            } onCancel: {
+                wake(track)
+            }
+            if isFinished { return false }
+        }
+        return false
+    }
+
+    var isFinished: Bool {
+        slots.withLock { $0.isFinished }
+    }
+
     /// The engine took or refused a chunk of `track`: its slot is free.
     func release(_ track: LiveTrack) {
-        inFlight.withLock { counts in
-            counts[track] = max(0, counts[track, default: 0] - 1)
+        slots.withLock { slots in
+            slots.inFlight[track] = max(0, slots.inFlight[track, default: 0] - 1)
         }
+        wake(track)
     }
 
     /// No more chunks; each stream ends once its queued chunks are read.
     func finish() {
+        let waiting = slots.withLock { slots in
+            slots.isFinished = true
+            defer { slots.waiters = [:] }
+            return slots.waiters.values.flatMap(\.self)
+        }
         streams.values.forEach { $0.continuation.finish() }
+        waiting.forEach { $0.resume() }
+    }
+
+    private func wake(_ track: LiveTrack) {
+        let waiting = slots.withLock { slots in
+            slots.waiters.removeValue(forKey: track) ?? []
+        }
+        waiting.forEach { $0.resume() }
     }
 }
 
@@ -91,16 +143,33 @@ final class LiveAudioPump: @unchecked Sendable {
     private var lastLevelAt: TimeInterval = 0
     private var isStopped = false
 
-    /// - Parameter discardBefore: Audio before this recording time is dropped,
-    ///   for a start mid-recording.
-    init(source: any LiveAudioSource, pipe: LiveChunkPipe, discardBefore: TimeInterval, interval: Duration = .milliseconds(50)) {
+    /// - Parameters:
+    ///   - discardBefore: Audio before this recording time is dropped, for a
+    ///     start mid-recording.
+    ///   - retention: The most audio per track waiting for the pipe.
+    ///   - handoff: For a start that catches up from the recording's files:
+    ///     the pump holds each track's chunks until the file read reaches them.
+    init(
+        source: any LiveAudioSource,
+        pipe: LiveChunkPipe,
+        discardBefore: TimeInterval,
+        retention: TimeInterval = LivePumpCore.retention,
+        handoff: FileCatchUpHandoff? = nil,
+        interval: Duration = .milliseconds(50)
+    ) {
         self.source = source
         self.pipe = pipe
         self.interval = interval
         (events, eventContinuation) = AsyncStream.makeStream(of: Event.self, bufferingPolicy: .unbounded)
         let events = eventContinuation
         // Set before any drain: `start()` hands the core to the queue.
-        core = LivePumpCore(discardBefore: discardBefore, sink: { pipe.offer($0) }, onGap: { events.yield(.gap($0)) })
+        core = LivePumpCore(
+            discardBefore: discardBefore,
+            retention: retention,
+            handoff: handoff,
+            sink: { pipe.offer($0) },
+            onGap: { events.yield(.gap($0)) }
+        )
     }
 
     func start() {

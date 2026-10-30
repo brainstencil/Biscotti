@@ -270,9 +270,9 @@ public final class MeetingChatService {
     }
 
     /// The field's "Turn On" action while the live transcript is off. Live
-    /// transcription starts from now, not from the start of the recording, so
-    /// until the final transcript is saved, chat can answer only about what is
-    /// said after it.
+    /// transcription starts and catches up from the start of the recording;
+    /// until it has, answers cover what it has transcribed so far, and their
+    /// footer says how far that reaches.
     public func turnOnLiveTranscript() async {
         if let onTurnOnLiveTranscript {
             await onTurnOnLiveTranscript()

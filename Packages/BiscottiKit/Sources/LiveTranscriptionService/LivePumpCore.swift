@@ -22,9 +22,10 @@ final class LivePumpCore {
     /// The level meter reads the newest 50 ms.
     static let levelSamples = 800
     /// Chunks the sink refuses wait, oldest first, up to this much audio per
-    /// track, as 16-bit samples. Older ones are lost. The app hands waiting
-    /// audio to the engine only as fast as it transcribes it, so the engine
-    /// catches up on it instead of overflowing.
+    /// track, as 16-bit samples, unless the caller gives another limit. Older
+    /// ones are lost. The app hands waiting audio to the engine only as fast
+    /// as it transcribes it, so the engine catches up on it instead of
+    /// overflowing.
     static let retention: TimeInterval = LiveAudioLimits.pumpBacklog
     /// After a start mid-recording, the tap's queue, full since earlier,
     /// spills overflow this far past the start without a gap.
@@ -54,6 +55,8 @@ final class LivePumpCore {
         /// Chunks the sink has not taken yet, oldest first.
         var waiting = WaitingChunks()
         var waitingDuration: TimeInterval = 0
+        /// True once the file read has covered audio this track dropped.
+        var hasDroppedIntoFile = false
 
         init(track: LiveTrack) {
             self.track = track
@@ -61,6 +64,9 @@ final class LivePumpCore {
     }
 
     private let discardBefore: TimeInterval
+    /// This pump's limit on waiting audio per track.
+    let retention: TimeInterval
+    private let handoff: FileCatchUpHandoff?
     private let sink: (LiveAudioChunk) -> Bool
     private let onGap: (LiveGap) -> Void
     private let tracks: [LiveTrack: Track]
@@ -68,6 +74,12 @@ final class LivePumpCore {
     /// - Parameters:
     ///   - discardBefore: Audio before this time is dropped without a gap: a
     ///     start mid-recording begins there.
+    ///   - retention: The most waiting audio per track.
+    ///   - handoff: For a start that catches up from the recording's files.
+    ///     While a track reads its file, its chunks wait here, the sink is not
+    ///     offered them, and what retention drops is read from the file
+    ///     instead of lost. If the read gives up, the first chunk handed on is
+    ///     discontinuous. After Stop abandons the read, its chunks are dropped.
     ///   - sink: Takes a chunk, or returns false when it cannot take one now.
     ///     A refused chunk waits and is offered again, before any newer one,
     ///     on the next `offerWaiting()` or chunk. Only audio more than
@@ -76,10 +88,14 @@ final class LivePumpCore {
     init(
         tracks: [LiveTrack] = [.mic, .system],
         discardBefore: TimeInterval = 0,
+        retention: TimeInterval = LivePumpCore.retention,
+        handoff: FileCatchUpHandoff? = nil,
         sink: @escaping (LiveAudioChunk) -> Bool,
         onGap: @escaping (LiveGap) -> Void
     ) {
         self.discardBefore = discardBefore
+        self.retention = retention
+        self.handoff = handoff
         self.sink = sink
         self.onGap = onGap
         self.tracks = Dictionary(uniqueKeysWithValues: tracks.map { ($0, Track(track: $0)) })
@@ -206,6 +222,9 @@ final class LivePumpCore {
             case .notStarted:
                 // Leading silence before the track's first audio: nothing was missed.
                 return
+            case .overflow where route(of: state.track) == .file:
+                // The file read covers everything before the track's first chunk.
+                return
             case .overflow where start < discardBefore:
                 // The queue filled before a start mid-recording. Its overflow
                 // reaching just past the start is not a gap; beyond that,
@@ -270,25 +289,87 @@ final class LivePumpCore {
         }
         // Audio the sink takes at once is never converted.
         offerWaiting(of: state)
-        if state.waiting.isEmpty, sink(chunk) { return }
+        if state.waiting.isEmpty {
+            switch route(of: state.track) {
+            case .live, .liveAfterGap:
+                if handOn(chunk, of: state) { return }
+            case .dropped:
+                return
+            case .file:
+                handoff?.pumpHolds(state.track, from: chunk.startTime)
+            }
+        }
         state.waiting.append(WaitingChunk(chunk, isSilent: isSilent))
         state.waitingDuration += chunk.duration
         dropBeyondRetention(in: state)
     }
+}
+
+// MARK: - Waiting for the sink
+
+extension LivePumpCore {
+    private func route(of track: LiveTrack) -> FileCatchUpHandoff.Route {
+        handoff?.route(track) ?? .live
+    }
 
     private func offerWaiting(of state: Track) {
-        while let oldest = state.waiting.first, sink(oldest.chunk) {
-            state.waiting.removeFirst()
-            state.waitingDuration -= oldest.duration
+        switch route(of: state.track) {
+        case .file:
+            return
+        case .live, .liveAfterGap:
+            while let oldest = state.waiting.first, handOn(oldest.chunk, of: state) {
+                state.waiting.removeFirst()
+                state.waitingDuration -= oldest.duration
+            }
+        case .dropped:
+            state.waiting.removeAll()
+            state.waitingDuration = 0
         }
+    }
+
+    /// Hands a chunk to the sink. The first after a file read that gave up is
+    /// discontinuous: the audio between them is missing.
+    private func handOn(_ chunk: LiveAudioChunk, of state: Track) -> Bool {
+        guard route(of: state.track) == .liveAfterGap else { return sink(chunk) }
+        var chunk = chunk
+        chunk.isDiscontinuity = true
+        guard sink(chunk) else { return false }
+        handoff?.joinedAfterGap(state.track)
+        return true
     }
 
     /// Drops the oldest waiting audio beyond `retention` as a gap (one per
     /// call; the store joins touching gaps of the same silence); the chunk
     /// after it is discontinuous. The gap is silent when every dropped chunk was.
+    /// While the track reads its file, the file read covers the dropped audio
+    /// instead: no gap, and the chunk after it continues the file's audio.
     private func dropBeyondRetention(in state: Track) {
+        guard state.waitingDuration > retention + 1e-9 else { return }
+        let coveredByFile = handoff?.coverDrop(state.track) {
+            removeBeyondRetention(in: state).map { state.waiting.first?.startTime ?? $0.endTime }
+        } ?? false
+        if coveredByFile {
+            if !state.hasDroppedIntoFile {
+                state.hasDroppedIntoFile = true
+                let seconds = Int(retention)
+                Self.log.notice("The live \(state.track.rawValue, privacy: .public) audio waiting for the catch-up passed the pump's \(seconds, privacy: .public) s; the file read covers what is dropped")
+            }
+            return
+        }
+        guard let lost = removeBeyondRetention(in: state) else { return }
+        onGap(lost)
+        if state.waiting.isEmpty {
+            state.nextIsDiscontinuity = true
+        } else {
+            state.waiting.markFirstDiscontinuous()
+        }
+    }
+
+    /// Removes the oldest waiting chunks beyond `retention`. Returns the
+    /// stretch they covered, silent when every one was.
+    private func removeBeyondRetention(in state: Track) -> LiveGap? {
         var lost: LiveGap?
-        while state.waitingDuration > Self.retention + 1e-9, let oldest = state.waiting.first {
+        while state.waitingDuration > retention + 1e-9, let oldest = state.waiting.first {
             state.waiting.removeFirst()
             state.waitingDuration -= oldest.duration
             let isSilent = oldest.isSilent
@@ -299,13 +380,7 @@ final class LivePumpCore {
                 lost = LiveGap(track: state.track, startTime: oldest.startTime, duration: oldest.duration, reason: .queueOverflow, isSilent: isSilent)
             }
         }
-        guard let lost else { return }
-        onGap(lost)
-        if state.waiting.isEmpty {
-            state.nextIsDiscontinuity = true
-        } else {
-            state.waiting.markFirstDiscontinuous()
-        }
+        return lost
     }
 }
 
@@ -381,6 +456,12 @@ struct WaitingChunks {
             chunks.removeFirst(head)
             head = 0
         }
+    }
+
+    mutating func removeAll() {
+        chunks.removeAll()
+        head = 0
+        sampleCount = 0
     }
 
     mutating func markFirstDiscontinuous() {

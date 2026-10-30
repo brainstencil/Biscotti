@@ -1000,6 +1000,7 @@ extension AppCore {
         await liveTranscription.start(
             meetingID: meetingID,
             tap: liveTap,
+            files: recording.capturePaths.map { LiveRecordingFiles(mic: $0.micAAC, system: $0.systemAAC) },
             timelineOffset: recording.state.timelineOffset ?? 0,
             recordingStartedAt: recording.state.startDate ?? Date()
         )

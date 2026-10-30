@@ -28,6 +28,11 @@ public final class RecordingController {
     /// tick, so views that need only this do not redraw during a recording.
     public private(set) var recordingMeetingID: UUID?
 
+    /// The track files of the recording in progress, nil when none is. The
+    /// live transcript reads them to catch up from the start when it is
+    /// turned on mid-recording.
+    public private(set) var capturePaths: CapturePaths?
+
     /// `true` if the engine inferred that system audio capture was denied.
     public private(set) var systemAudioWarning: Bool = false
 
@@ -163,6 +168,7 @@ public final class RecordingController {
 
         let timelineOffset = await newRecorder.timelineOffset()
         recorder = newRecorder
+        capturePaths = paths
         state = RecordingState(
             isRecording: true, elapsed: 0,
             meetingID: setup.meetingID, startDate: Date(),
@@ -232,6 +238,7 @@ public final class RecordingController {
 
         // Reset state
         recorder = nil
+        capturePaths = nil
         notes = []
         state = .idle
 

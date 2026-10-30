@@ -74,8 +74,8 @@ struct ChatFieldPresentation: Equatable {
         return "\(length.formatted(style)) / \(maxLength.formatted(style))"
     }
 
-    /// The reason and its action. Turn On starts the live transcript from now,
-    /// so the text promises nothing about what was said before it (backlog B1).
+    /// The reason and its action. Turn On starts the live transcript, which
+    /// catches up from the start of the recording (backlog B1).
     private static func unavailable(_ availability: ChatAvailability) -> (text: String, action: ActionButton?)? {
         switch availability {
         case .available:

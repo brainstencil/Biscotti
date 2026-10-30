@@ -336,3 +336,20 @@ struct RecordingViewModelLiveTests {
         #expect(zip(silent, loud).allSatisfy { $0 < $1 })
     }
 }
+
+@Suite("RecordingViewModel -- live transcript turned on mid-recording")
+@MainActor
+struct RecordingViewModelLiveCatchUpTests {
+    @Test("Turned on mid-recording, the drawer has no \"Live transcript started at\" line: the transcript catches up from 0:00")
+    func midRecordingStartHasNoStartMarker() async throws {
+        let ctx = try LiveScreenFixture(isEnabled: false)
+        await ctx.fix.core.startRecording()
+        await ctx.live.setEnabled(true)
+
+        #expect(ctx.live.startMarker == nil)
+        #expect(!ctx.viewModel.liveItems.contains { item in
+            if case .startMarker = item.kind { true } else { false }
+        })
+        await ctx.stop()
+    }
+}

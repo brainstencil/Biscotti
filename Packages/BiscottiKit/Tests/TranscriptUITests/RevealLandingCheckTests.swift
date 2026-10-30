@@ -120,8 +120,9 @@ struct RevealLandingCheckTests {
     @Test("rows behind the meeting page's band and card are below what the reader sees")
     func rowPlacementWithABottomInset() {
         let tracker = VisibleRowTracker()
-        // A 700 pt list at the window's top whose lower 380 pt are under the chat card and the band.
-        tracker.updateList(frame: CGRect(x: 0, y: 0, width: 600, height: 700))
+        // A 700 pt scroll view at the window's top whose lower 380 pt are under the chat card and
+        // the band; the list's frame excludes that inset.
+        tracker.updateList(frame: CGRect(x: 0, y: 0, width: 600, height: 320))
         tracker.updateScroll(offsetY: 2000, insetTop: 0, insetBottom: 380, viewportHeight: 700)
         tracker.update(id: "visible", startTime: 60, frame: CGRect(x: 0, y: 200, width: 100, height: 50))
         tracker.update(id: "straddling", startTime: 70, frame: CGRect(x: 0, y: 300, width: 100, height: 50))
@@ -131,7 +132,7 @@ struct RevealLandingCheckTests {
         #expect(tracker.placement(of: "straddling") == .inView)
         #expect(tracker.placement(of: "behindCard") == .below)
         #expect(tracker.timesInView == 60 ... 70)
-        #expect(tracker.visibleSpan.description == "60.0–70.0 s (view 700 pt, list at 0 pt in the window, 700 pt high, insets 0 top, 380 bottom)")
+        #expect(tracker.visibleSpan.description == "60.0–70.0 s (view 700 pt, list at 0 pt in the window, 320 pt high, insets 0 top, 380 bottom)")
     }
 
     @Test("before the list reports its geometry, the log reads the view's height as unknown")

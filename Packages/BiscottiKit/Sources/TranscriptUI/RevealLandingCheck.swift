@@ -10,11 +10,11 @@ enum RowPlacement: Equatable {
 }
 
 /// What the reader sees, for the landing log: the start times of the rows in
-/// view; the edges of the view in the list's space (the height, less the top
-/// and bottom insets under a toolbar or a pinned band and card); and where
-/// the list's frame sits in the window, which row frames are read against.
-/// The landing log shows whether the list's frame is its scroll view's (at
-/// the window's top on the meeting page, under the toolbar's inset).
+/// view; the edges of the view in the scroll view's space (the height, less
+/// the top and bottom insets under a toolbar or a pinned band and card); and
+/// where the list's frame sits in the window. The list's frame excludes the
+/// insets (on the meeting page, 52 pt down the window and the view's height
+/// less both insets), so rows are read against its top less the top inset.
 struct VisibleSpan: Equatable, CustomStringConvertible {
     var times: ClosedRange<TimeInterval>?
     var height: CGFloat

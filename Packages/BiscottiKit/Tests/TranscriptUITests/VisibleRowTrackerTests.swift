@@ -21,7 +21,7 @@ struct VisibleRowTrackerTests {
         #expect(tracker.topVisibleStartTime == 40)
     }
 
-    @Test("the drawer: a list 540 pt down the window reads its rows from its own top")
+    @Test("the drawer: a list 540 pt down the window, with no insets, reads its rows from its own top")
     func drawerListOffsetInTheWindow() {
         let tracker = VisibleRowTracker()
         // Frames in the window, as the rows and the list report them.
@@ -42,28 +42,33 @@ struct VisibleRowTrackerTests {
             == "77.9–80.0 s (view 431 pt, list at 540 pt in the window, 431 pt high, insets 0 top, 0 bottom)")
     }
 
-    @Test("the meeting page: a list at the window's top reads its rows as the window does")
-    func meetingPageListAtTheWindowTop() {
+    @Test("the meeting page as measured: a list 52 pt down the window, inside its 52 and 1032 pt insets, reads rows from the scroll view's top")
+    func meetingPageListInsideItsInsets() {
         let page = VisibleRowTracker()
-        page.updateList(frame: CGRect(x: 300, y: 0, width: 880, height: 1290))
+        // Hardware re-check 3: view 1290 pt, list at 52 pt in the window, 206 pt high, insets 52 top, 1032 bottom.
         page.updateScroll(offsetY: 9000, insetTop: 52, insetBottom: 1032, viewportHeight: 1290)
-        page.update(id: "cited", startTime: 632.6, frame: CGRect(x: 320, y: 60, width: 600, height: 40))
-        page.update(id: "underToolbar", startTime: 620, frame: CGRect(x: 320, y: 10, width: 600, height: 40))
-        page.update(id: "behindCard", startTime: 700, frame: CGRect(x: 320, y: 300, width: 600, height: 40))
+        page.updateList(frame: CGRect(x: 300, y: 52, width: 880, height: 206))
+        page.update(id: "cited", startTime: 632.6, frame: CGRect(x: 320, y: 52, width: 600, height: 40))
+        page.update(id: "underToolbar", startTime: 620, frame: CGRect(x: 320, y: 12, width: 600, height: 40))
+        page.update(id: "lastInView", startTime: 652.5, frame: CGRect(x: 320, y: 200, width: 600, height: 50))
+        page.update(id: "behindCard", startTime: 659.4, frame: CGRect(x: 320, y: 258, width: 600, height: 40))
 
         #expect(page.placement(of: "cited") == .inView)
         #expect(page.placement(of: "underToolbar") == .above)
         #expect(page.placement(of: "behindCard") == .below)
+        #expect(page.timesInView == 632.6 ... 652.5)
         #expect(page.visibleSpan.description
-            == "632.6–632.6 s (view 1290 pt, list at 0 pt in the window, 1290 pt high, insets 52 top, 1032 bottom)")
+            == "632.6–652.5 s (view 1290 pt, list at 52 pt in the window, 206 pt high, insets 52 top, 1032 bottom)")
     }
 
-    @Test("a list down the window with insets: rows are read from the list's top, then the insets apply")
-    func listOffsetWithInsets() {
+    @Test("a list down the window, inside its insets: rows are read from the scroll view's top, then the insets apply")
+    func listInsideItsInsetsDownTheWindow() {
         let tracker = VisibleRowTracker()
-        tracker.updateList(frame: CGRect(x: 0, y: 100, width: 600, height: 800))
+        // A scroll view at 100 pt in the window, 800 pt high, with insets of 52 and 200:
+        // the list's frame is 152 pt down and 548 pt high.
         tracker.updateScroll(offsetY: 3000, insetTop: 52, insetBottom: 200, viewportHeight: 800)
-        // In the list's space: 30–50 (under the top inset), 52–92, 560–600, 600–640 (under the bottom inset).
+        tracker.updateList(frame: CGRect(x: 0, y: 152, width: 600, height: 548))
+        // In the scroll view's space: 30–50 (under the top inset), 52–92, 560–600, 600–640 (under the bottom inset).
         tracker.update(id: "underTop", startTime: 10, frame: CGRect(x: 0, y: 130, width: 600, height: 20))
         tracker.update(id: "atTop", startTime: 20, frame: CGRect(x: 0, y: 152, width: 600, height: 40))
         tracker.update(id: "atBottom", startTime: 30, frame: CGRect(x: 0, y: 660, width: 600, height: 40))
@@ -76,22 +81,23 @@ struct VisibleRowTrackerTests {
         #expect(tracker.timesInView == 20 ... 30)
     }
 
-    @Test("the list moves after its rows have reported: rows are read against its current top until they report again")
+    @Test("the list moves after its rows have reported: rows are read against the scroll view's current top until they report again")
     func listMovesAfterItsRows() {
         let tracker = VisibleRowTracker()
-        tracker.updateScroll(offsetY: 0, insetTop: 0, viewportHeight: 400)
-        tracker.updateList(frame: CGRect(x: 0, y: 540, width: 600, height: 400))
-        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 560, width: 600, height: 40))
-        #expect(tracker.placement(of: "row") == .inView)
+        // A 400 pt scroll view with a 20 pt top inset: the list's frame starts 20 pt below its top.
+        tracker.updateScroll(offsetY: 0, insetTop: 20, viewportHeight: 400)
+        tracker.updateList(frame: CGRect(x: 0, y: 560, width: 600, height: 380))
+        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 580, width: 600, height: 40))
+        #expect(tracker.placement(of: "row") == .inView, "read at 40 pt")
 
         // The list moves up 300 pt (the drawer settling); the row has not reported yet.
-        tracker.updateList(frame: CGRect(x: 0, y: 240, width: 600, height: 400))
-        #expect(tracker.placement(of: "row") == .inView, "read at 320 pt in a 400 pt view")
-        tracker.updateList(frame: CGRect(x: 0, y: 100, width: 600, height: 400))
-        #expect(tracker.placement(of: "row") == .below, "read at 460 pt: stale until the row reports")
+        tracker.updateList(frame: CGRect(x: 0, y: 260, width: 600, height: 380))
+        #expect(tracker.placement(of: "row") == .inView, "read at 340 pt in a 400 pt view")
+        tracker.updateList(frame: CGRect(x: 0, y: 120, width: 600, height: 380))
+        #expect(tracker.placement(of: "row") == .below, "read at 480 pt: stale until the row reports")
 
         // The row reports its moved frame.
-        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 120, width: 600, height: 40))
+        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 140, width: 600, height: 40))
         #expect(tracker.placement(of: "row") == .inView)
     }
 

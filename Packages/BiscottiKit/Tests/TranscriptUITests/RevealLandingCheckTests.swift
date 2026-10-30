@@ -10,7 +10,7 @@ private func bubbleItem(_ id: String, _ start: TimeInterval, _ end: TimeInterval
 private let items = [bubbleItem("a", 0, 5), bubbleItem("b", 5, 9), bubbleItem("c", 12, 15)]
 
 private func view(_ times: ClosedRange<TimeInterval>?) -> VisibleSpan {
-    VisibleSpan(times: times, height: 431, insetTop: 0, insetBottom: 0)
+    VisibleSpan(times: times, height: 431, listTop: 540, listHeight: 431, insetTop: 0, insetBottom: 0)
 }
 
 /// Where a reveal's scroll landed: a lazy list that estimates the heights of
@@ -120,7 +120,8 @@ struct RevealLandingCheckTests {
     @Test("rows behind the meeting page's band and card are below what the reader sees")
     func rowPlacementWithABottomInset() {
         let tracker = VisibleRowTracker()
-        // A 700 pt list whose lower 380 pt are under the chat card and the band.
+        // A 700 pt list at the window's top whose lower 380 pt are under the chat card and the band.
+        tracker.updateList(frame: CGRect(x: 0, y: 0, width: 600, height: 700))
         tracker.updateScroll(offsetY: 2000, insetTop: 0, insetBottom: 380, viewportHeight: 700)
         tracker.update(id: "visible", startTime: 60, frame: CGRect(x: 0, y: 200, width: 100, height: 50))
         tracker.update(id: "straddling", startTime: 70, frame: CGRect(x: 0, y: 300, width: 100, height: 50))
@@ -130,15 +131,16 @@ struct RevealLandingCheckTests {
         #expect(tracker.placement(of: "straddling") == .inView)
         #expect(tracker.placement(of: "behindCard") == .below)
         #expect(tracker.timesInView == 60 ... 70)
-        #expect(tracker.visibleSpan.description == "60.0–70.0 s (view 700 pt, insets 0 top, 380 bottom)")
+        #expect(tracker.visibleSpan.description == "60.0–70.0 s (view 700 pt, list at 0 pt in the window, 700 pt high, insets 0 top, 380 bottom)")
     }
 
     @Test("before the list reports its geometry, the log reads the view's height as unknown")
     func unknownHeightInTheLog() {
         let tracker = VisibleRowTracker()
-        #expect(tracker.visibleSpan.description == "no rows (view unknown pt, insets 0 top, 0 bottom)")
-        #expect(VisibleSpan(times: 1 ... 2, height: .infinity, insetTop: .nan, insetBottom: 12.4).description
-            == "1.0–2.0 s (view unknown pt, insets unknown top, 12 bottom)")
+        #expect(tracker.visibleSpan.description
+            == "no rows (view unknown pt, list at unknown pt in the window, unknown pt high, insets 0 top, 0 bottom)")
+        let span = VisibleSpan(times: 1 ... 2, height: .infinity, listTop: 539.6, listHeight: .nan, insetTop: .nan, insetBottom: 12.4)
+        #expect(span.description == "1.0–2.0 s (view unknown pt, list at 540 pt in the window, unknown pt high, insets unknown top, 12 bottom)")
     }
 
     @Test("a row is in view, above or below what the reader sees, or not made")

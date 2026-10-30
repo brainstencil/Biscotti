@@ -21,8 +21,8 @@ struct VisibleRowTrackerTests {
         #expect(tracker.topVisibleStartTime == 40)
     }
 
-    @Test("rows are read against the list's own top, not the window's: a drawer list 540 pt down the window")
-    func rowsAreReadAgainstTheListTop() {
+    @Test("the drawer: a list 540 pt down the window reads its rows from its own top")
+    func drawerListOffsetInTheWindow() {
         let tracker = VisibleRowTracker()
         // Frames in the window, as the rows and the list report them.
         tracker.updateList(frame: CGRect(x: 300, y: 540, width: 880, height: 431))
@@ -38,14 +38,61 @@ struct VisibleRowTrackerTests {
         #expect(tracker.placement(of: "below") == .below)
         #expect(tracker.timesInView == 77.9 ... 80)
         #expect(tracker.topVisibleStartTime == 77.9)
+        #expect(tracker.visibleSpan.description
+            == "77.9–80.0 s (view 431 pt, list at 540 pt in the window, 431 pt high, insets 0 top, 0 bottom)")
+    }
 
-        // The meeting page's list starts at the window's top: the same frames read as before.
+    @Test("the meeting page: a list at the window's top reads its rows as the window does")
+    func meetingPageListAtTheWindowTop() {
         let page = VisibleRowTracker()
         page.updateList(frame: CGRect(x: 300, y: 0, width: 880, height: 1290))
         page.updateScroll(offsetY: 9000, insetTop: 52, insetBottom: 1032, viewportHeight: 1290)
         page.update(id: "cited", startTime: 632.6, frame: CGRect(x: 320, y: 60, width: 600, height: 40))
+        page.update(id: "underToolbar", startTime: 620, frame: CGRect(x: 320, y: 10, width: 600, height: 40))
+        page.update(id: "behindCard", startTime: 700, frame: CGRect(x: 320, y: 300, width: 600, height: 40))
+
         #expect(page.placement(of: "cited") == .inView)
-        #expect(page.visibleSpan.description == "632.6–632.6 s (view 1290 pt, insets 52 top, 1032 bottom)")
+        #expect(page.placement(of: "underToolbar") == .above)
+        #expect(page.placement(of: "behindCard") == .below)
+        #expect(page.visibleSpan.description
+            == "632.6–632.6 s (view 1290 pt, list at 0 pt in the window, 1290 pt high, insets 52 top, 1032 bottom)")
+    }
+
+    @Test("a list down the window with insets: rows are read from the list's top, then the insets apply")
+    func listOffsetWithInsets() {
+        let tracker = VisibleRowTracker()
+        tracker.updateList(frame: CGRect(x: 0, y: 100, width: 600, height: 800))
+        tracker.updateScroll(offsetY: 3000, insetTop: 52, insetBottom: 200, viewportHeight: 800)
+        // In the list's space: 30–50 (under the top inset), 52–92, 560–600, 600–640 (under the bottom inset).
+        tracker.update(id: "underTop", startTime: 10, frame: CGRect(x: 0, y: 130, width: 600, height: 20))
+        tracker.update(id: "atTop", startTime: 20, frame: CGRect(x: 0, y: 152, width: 600, height: 40))
+        tracker.update(id: "atBottom", startTime: 30, frame: CGRect(x: 0, y: 660, width: 600, height: 40))
+        tracker.update(id: "underBottom", startTime: 40, frame: CGRect(x: 0, y: 700, width: 600, height: 40))
+
+        #expect(tracker.placement(of: "underTop") == .above)
+        #expect(tracker.placement(of: "atTop") == .inView)
+        #expect(tracker.placement(of: "atBottom") == .inView)
+        #expect(tracker.placement(of: "underBottom") == .below)
+        #expect(tracker.timesInView == 20 ... 30)
+    }
+
+    @Test("the list moves after its rows have reported: rows are read against its current top until they report again")
+    func listMovesAfterItsRows() {
+        let tracker = VisibleRowTracker()
+        tracker.updateScroll(offsetY: 0, insetTop: 0, viewportHeight: 400)
+        tracker.updateList(frame: CGRect(x: 0, y: 540, width: 600, height: 400))
+        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 560, width: 600, height: 40))
+        #expect(tracker.placement(of: "row") == .inView)
+
+        // The list moves up 300 pt (the drawer settling); the row has not reported yet.
+        tracker.updateList(frame: CGRect(x: 0, y: 240, width: 600, height: 400))
+        #expect(tracker.placement(of: "row") == .inView, "read at 320 pt in a 400 pt view")
+        tracker.updateList(frame: CGRect(x: 0, y: 100, width: 600, height: 400))
+        #expect(tracker.placement(of: "row") == .below, "read at 460 pt: stale until the row reports")
+
+        // The row reports its moved frame.
+        tracker.update(id: "row", startTime: 5, frame: CGRect(x: 0, y: 120, width: 600, height: 40))
+        #expect(tracker.placement(of: "row") == .inView)
     }
 
     @Test("while the header is visible there is no anchor")

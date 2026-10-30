@@ -194,7 +194,9 @@ public struct TranscriptBubbleList<Header: View>: View {
                 follower?.itemsChanged(latest)
             }
             .onChange(of: follow) { _, mode in
-                state = ListState(mode: mode)
+                // The tracker keeps the list's frame and header, which only
+                // arrive when they change.
+                state = ListState(mode: mode, tracker: state?.tracker ?? VisibleRowTracker())
             }
             .onChange(of: shown) { _, shown in
                 find?.update(items: shown)
@@ -305,13 +307,15 @@ public struct TranscriptBubbleList<Header: View>: View {
 @MainActor
 final class ListState {
     let follower: FollowController
-    let tracker = VisibleRowTracker()
+    let tracker: VisibleRowTracker
 
     /// Created when the list appears (or its follow mode changes), so the
-    /// list's first layout passes do not stop following.
-    init(mode: FollowMode) {
+    /// list's first layout passes do not stop following. A change of follow
+    /// mode passes the old tracker on.
+    init(mode: FollowMode, tracker: VisibleRowTracker = VisibleRowTracker()) {
         follower = FollowController(mode: mode)
         follower.listAppeared()
+        self.tracker = tracker
     }
 }
 

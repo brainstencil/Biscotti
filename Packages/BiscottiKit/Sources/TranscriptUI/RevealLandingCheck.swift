@@ -10,17 +10,24 @@ enum RowPlacement: Equatable {
 }
 
 /// What the reader sees, for the landing log: the start times of the rows in
-/// view, and the edges of the view in the scroll view's space (the height,
-/// less the top and bottom insets under a toolbar or a pinned band and card).
+/// view; the edges of the view in the list's space (the height, less the top
+/// and bottom insets under a toolbar or a pinned band and card); and where
+/// the list's frame sits in the window, which row frames are read against.
+/// The landing log shows whether the list's frame is its scroll view's (at
+/// the window's top on the meeting page, under the toolbar's inset).
 struct VisibleSpan: Equatable, CustomStringConvertible {
     var times: ClosedRange<TimeInterval>?
     var height: CGFloat
+    /// The list's top edge in the window; not finite before it is reported.
+    var listTop: CGFloat
+    var listHeight: CGFloat
     var insetTop: CGFloat
     var insetBottom: CGFloat
 
     var description: String {
         let rows = times.map { String(format: "%.1f–%.1f s", $0.lowerBound, $0.upperBound) } ?? "no rows"
-        return "\(rows) (view \(Self.points(height)) pt, insets \(Self.points(insetTop)) top, \(Self.points(insetBottom)) bottom)"
+        return "\(rows) (view \(Self.points(height)) pt, list at \(Self.points(listTop)) pt in the window, "
+            + "\(Self.points(listHeight)) pt high, insets \(Self.points(insetTop)) top, \(Self.points(insetBottom)) bottom)"
     }
 
     /// Whole points; "unknown" before the list has reported its geometry.

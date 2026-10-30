@@ -1,5 +1,5 @@
 ---
-status: draft
+status: complete
 ---
 
 # Phase 10: Hardware validation in Biscotti Dev
@@ -150,6 +150,8 @@ Manager hardware re-check 3, 29 Oct 21:21–21:31 (user at the Mac, pid 54182, c
 Manager hardware re-check 4, 29 Oct 21:51–21:52 (pid 59857, 6267e8c): pass. On the meeting page, card open, the 10:32 chip logged "The reveal of 632.6 s landed in view, at 632.6–652.5 s (view 1290 pt, list at 52 pt in the window, 206 pt high, insets 52 top, 1032 bottom)" and the 11:01 chip "landed in view, at 661.5–675.7 s" with the same frame; no retries; both match 6a33d20 (RECHECK4-meeting-page-1032-chip, RECHECK4-landing-log.txt). The drawer was not re-run on this build (it needs audio): its top inset is 0, so the rule reads it as in re-check 3, which passed, and its unit test is unchanged.
 
 **Final state of the reveal checks:** F14 passes in the recording drawer (re-check 3: the 2:57 chip landed in view on the first try, held after the fade with Return to live, and Back to chat restored the card) and on the meeting page (re-check 4: the 10:32 and 11:01 chips landed in view above the card, no retries). The meeting-page insets pass with the card open (bottom inset 1032 pt, top 52 pt); the card-closed inset was not measured. Hardware validation for phase 10 is complete; the open items are the user's (U1–U4, F6) and the decisions recorded above (B6, the count's position, the History order).
+
+The code review rounds of the last fixes, eac38e4 (row frames read against the list), 536cda0 (the list's frame in the landing log), 6267e8c (rows read against the scroll view's top) and 4e39cdc (a List as high as its scroll view read as the container), ended clean.
 
 Also recorded:
 - **A pre-existing flaky test in `Packages/Transcription`** (for the user to route): "a preparation replies with the models prepared; a cancel sent after it stops it" (`EngineHostTests.swift:751`) failed once in `make precommit-checks` on 29 Oct, expecting a "prepared" reply and finding the final model loaded after the cancel. The package is untouched by this project; the test passed on rerun, three times alone and in the full run.

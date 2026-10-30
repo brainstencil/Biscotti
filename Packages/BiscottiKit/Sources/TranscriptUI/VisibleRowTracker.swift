@@ -2,9 +2,14 @@ import CoreGraphics
 import Foundation
 
 /// Finds the topmost visible item from the frames of the rows the list has
-/// materialized, in the scroll view's coordinate space. In the app the
-/// scroll view runs under the toolbar, so what the reader sees starts at
-/// the top content inset, not at y = 0.
+/// materialized. Rows and the list both report their frames in the window
+/// (`.global`), and the tracker works in the list's own space: y = 0 at the
+/// list's top edge. A macOS `List` is not a SwiftUI `ScrollView`, so a row's
+/// `.scrollView` frame resolves to an outer space; it matched the list only
+/// where the list starts at the window's top (the meeting page), and was
+/// off by the list's origin in the recording drawer (meeting chat phase 10
+/// hardware check F14). In the app the scroll view runs under the toolbar,
+/// so what the reader sees starts at the top content inset, not at y = 0.
 ///
 /// The `List` spike showed that `onAppear`/`onDisappear` overscan by one or
 /// two rows above the visible area, so appearance cannot tell which row is
@@ -17,6 +22,8 @@ final class VisibleRowTracker {
     }
 
     private var rows: [String: Row] = [:]
+    /// The list's top edge in the window, which row frames are reported against.
+    private var listTop: CGFloat = 0
     /// The content position at the top of what the reader sees, below the
     /// top content inset.
     private var visibleTop: CGFloat = 0
@@ -31,8 +38,20 @@ final class VisibleRowTracker {
     /// The bottom content inset (under the meeting page's band and chat card).
     private var insetBottom: CGFloat = 0
 
+    /// A row's frame in the window (`.global`).
     func update(id: String, startTime: TimeInterval, frame: CGRect) {
         rows[id] = Row(startTime: startTime, frame: frame)
+    }
+
+    /// The list's frame in the window (`.global`): row frames are read
+    /// against its top edge.
+    func updateList(frame: CGRect) {
+        listTop = frame.minY
+    }
+
+    /// The rows, with their frames in the list's space.
+    private var listRows: [Row] {
+        rows.values.map { Row(startTime: $0.startTime, frame: $0.frame.offsetBy(dx: 0, dy: -listTop)) }
     }
 
     func remove(id: String) {
@@ -62,14 +81,15 @@ final class VisibleRowTracker {
     /// the list has made.
     func placement(of id: String) -> RowPlacement {
         guard let row = rows[id] else { return .notShown }
-        if row.frame.maxY <= insetTop { return .above }
-        if row.frame.minY >= visibleBottom { return .below }
+        let frame = row.frame.offsetBy(dx: 0, dy: -listTop)
+        if frame.maxY <= insetTop { return .above }
+        if frame.minY >= visibleBottom { return .below }
         return .inView
     }
 
     /// The start times of the rows in view, earliest to latest; nil with none.
     var timesInView: ClosedRange<TimeInterval>? {
-        let times = rows.values
+        let times = listRows
             .filter { $0.frame.maxY > insetTop && $0.frame.minY < visibleBottom }
             .map(\.startTime)
         guard let first = times.min(), let last = times.max() else { return nil }
@@ -90,7 +110,7 @@ final class VisibleRowTracker {
     /// swap should leave them there).
     var topVisibleStartTime: TimeInterval? {
         guard !isHeaderVisible else { return nil }
-        return rows.values
+        return listRows
             .filter { $0.frame.midY >= insetTop }
             .min { $0.frame.minY < $1.frame.minY }?
             .startTime

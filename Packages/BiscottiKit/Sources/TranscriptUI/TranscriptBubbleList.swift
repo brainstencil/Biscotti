@@ -131,7 +131,9 @@ public struct TranscriptBubbleList<Header: View>: View {
                     .padding(.top, Self.topSpacing(for: item))
                     .padding(.bottom, item.id == shown.last?.id ? bottomPadding : 0)
                     .readableRowWidth(padding: rowPadding, maxWidth: maxRowWidth)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                    // In the window, read against the list's own frame below:
+                    // a `List` is not a `ScrollView`, so `.scrollView` is not its space.
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                         listState().tracker.update(id: item.id, startTime: item.startTime, frame: frame)
                         publishAnchor()
                     }
@@ -146,6 +148,10 @@ public struct TranscriptBubbleList<Header: View>: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                listState().tracker.updateList(frame: frame)
+                publishAnchor()
+            }
             .onScrollGeometryChange(for: ScrollSample.self) { geometry in
                 ScrollSample(
                     offsetY: geometry.contentOffset.y,

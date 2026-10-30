@@ -21,6 +21,33 @@ struct VisibleRowTrackerTests {
         #expect(tracker.topVisibleStartTime == 40)
     }
 
+    @Test("rows are read against the list's own top, not the window's: a drawer list 540 pt down the window")
+    func rowsAreReadAgainstTheListTop() {
+        let tracker = VisibleRowTracker()
+        // Frames in the window, as the rows and the list report them.
+        tracker.updateList(frame: CGRect(x: 300, y: 540, width: 880, height: 431))
+        tracker.updateScroll(offsetY: 45000, insetTop: 0, viewportHeight: 431)
+        tracker.updateHeader(height: 0)
+        tracker.update(id: "overscan", startTime: 70, frame: CGRect(x: 320, y: 480, width: 600, height: 50))
+        tracker.update(id: "cited", startTime: 77.9, frame: CGRect(x: 320, y: 540, width: 600, height: 40))
+        tracker.update(id: "next", startTime: 80, frame: CGRect(x: 320, y: 590, width: 600, height: 40))
+        tracker.update(id: "below", startTime: 120, frame: CGRect(x: 320, y: 971, width: 600, height: 40))
+
+        #expect(tracker.placement(of: "cited") == .inView)
+        #expect(tracker.placement(of: "overscan") == .above)
+        #expect(tracker.placement(of: "below") == .below)
+        #expect(tracker.timesInView == 77.9 ... 80)
+        #expect(tracker.topVisibleStartTime == 77.9)
+
+        // The meeting page's list starts at the window's top: the same frames read as before.
+        let page = VisibleRowTracker()
+        page.updateList(frame: CGRect(x: 300, y: 0, width: 880, height: 1290))
+        page.updateScroll(offsetY: 9000, insetTop: 52, insetBottom: 1032, viewportHeight: 1290)
+        page.update(id: "cited", startTime: 632.6, frame: CGRect(x: 320, y: 60, width: 600, height: 40))
+        #expect(page.placement(of: "cited") == .inView)
+        #expect(page.visibleSpan.description == "632.6–632.6 s (view 1290 pt, insets 52 top, 1032 bottom)")
+    }
+
     @Test("while the header is visible there is no anchor")
     func headerVisibleGivesNoAnchor() {
         let tracker = VisibleRowTracker()

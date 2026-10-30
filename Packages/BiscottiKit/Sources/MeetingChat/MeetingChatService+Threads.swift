@@ -6,8 +6,8 @@ extension MeetingChatService {
     /// when the meeting's page or recording screen appears.
     ///
     /// - Parameter hasTranscript: Whether the meeting has a preferred
-    ///   transcript, when the caller has just read its detail; nil reads it
-    ///   from the store.
+    ///   transcript with some text (``hasTranscriptToAsk(_:)``), when the
+    ///   caller has just read its detail; nil reads it from the store.
     public func load(meetingID: UUID, hasTranscript: Bool? = nil) async {
         let state = state(for: meetingID)
         if let hasTranscript {

@@ -38,8 +38,10 @@ public final class TranscriptionService {
     }
 
     /// Called when a pass has saved a meeting's transcript and made it the
-    /// preferred one, whoever asked for the pass. AppCore uses it to tell chat.
-    @ObservationIgnored public var onTranscriptSaved: (@MainActor (UUID) -> Void)?
+    /// preferred one, whoever asked for the pass, with the saved segments'
+    /// texts. AppCore uses it to tell chat whether the meeting now has a
+    /// transcript to ask about; chat holds the rule for "has text".
+    @ObservationIgnored public var onTranscriptSaved: (@MainActor (_ meetingID: UUID, _ segmentTexts: [String]) -> Void)?
 
     // MARK: - Dependencies
 
@@ -287,7 +289,7 @@ public final class TranscriptionService {
         guard await persistAndPromote(meetingID: meetingID, result: result, vocabularyUsed: vocab) else { return .ended }
 
         jobs[meetingID] = .completed
-        onTranscriptSaved?(meetingID)
+        onTranscriptSaved?(meetingID, result.segments.map(\.text))
         return .ended
     }
 

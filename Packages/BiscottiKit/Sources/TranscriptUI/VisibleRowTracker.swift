@@ -25,6 +25,11 @@ final class VisibleRowTracker {
     /// The header row's height. It is the list's first row, so it covers
     /// content offsets `0 ..< headerHeight`.
     private var headerHeight: CGFloat = .infinity
+    /// The scroll view's height, in its own space: rows below it, less the
+    /// bottom inset, are out of view.
+    private var viewportHeight: CGFloat = .infinity
+    /// The bottom content inset (under the meeting page's band and chat card).
+    private var insetBottom: CGFloat = 0
 
     func update(id: String, startTime: TimeInterval, frame: CGRect) {
         rows[id] = Row(startTime: startTime, frame: frame)
@@ -41,9 +46,39 @@ final class VisibleRowTracker {
     /// Header visibility follows the scroll position, which is reported on
     /// every jump (Page Down, End, a programmatic scroll), unlike the
     /// header row's own geometry, which stops when the row is recycled.
-    func updateScroll(offsetY: CGFloat, insetTop: CGFloat) {
+    func updateScroll(offsetY: CGFloat, insetTop: CGFloat, insetBottom: CGFloat = 0, viewportHeight: CGFloat = .infinity) {
         visibleTop = offsetY + insetTop
         self.insetTop = insetTop
+        self.insetBottom = insetBottom
+        self.viewportHeight = viewportHeight
+    }
+
+    /// The lower edge of what the reader sees, in the scroll view's space.
+    private var visibleBottom: CGFloat {
+        viewportHeight - insetBottom
+    }
+
+    /// Where an item's row is against what the reader sees, from the rows
+    /// the list has made.
+    func placement(of id: String) -> RowPlacement {
+        guard let row = rows[id] else { return .notShown }
+        if row.frame.maxY <= insetTop { return .above }
+        if row.frame.minY >= visibleBottom { return .below }
+        return .inView
+    }
+
+    /// The start times of the rows in view, earliest to latest; nil with none.
+    var timesInView: ClosedRange<TimeInterval>? {
+        let times = rows.values
+            .filter { $0.frame.maxY > insetTop && $0.frame.minY < visibleBottom }
+            .map(\.startTime)
+        guard let first = times.min(), let last = times.max() else { return nil }
+        return first ... last
+    }
+
+    /// What the reader sees, for the reveal's landing log.
+    var visibleSpan: VisibleSpan {
+        VisibleSpan(times: timesInView, height: viewportHeight, insetTop: insetTop, insetBottom: insetBottom)
     }
 
     var isHeaderVisible: Bool {

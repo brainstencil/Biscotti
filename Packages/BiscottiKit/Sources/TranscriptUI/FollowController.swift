@@ -14,12 +14,16 @@ public struct ScrollSample: Equatable, Sendable {
     /// The top content inset: the part of the scroll view under a toolbar.
     /// At rest at the top, `offsetY` is `-insetTop`.
     public var insetTop: CGFloat
+    /// The bottom content inset: the part of the scroll view under what is
+    /// pinned or laid over its bottom (the meeting page's band and chat card).
+    public var insetBottom: CGFloat
 
-    public init(offsetY: CGFloat, contentHeight: CGFloat, containerHeight: CGFloat, insetTop: CGFloat = 0) {
+    public init(offsetY: CGFloat, contentHeight: CGFloat, containerHeight: CGFloat, insetTop: CGFloat = 0, insetBottom: CGFloat = 0) {
         self.offsetY = offsetY
         self.contentHeight = contentHeight
         self.containerHeight = containerHeight
         self.insetTop = insetTop
+        self.insetBottom = insetBottom
     }
 
     public var isAtBottom: Bool {
@@ -82,6 +86,10 @@ public final class FollowController {
     @ObservationIgnored private var revealedItemID: String?
     /// The list landed away from the bottom since the last reveal.
     @ObservationIgnored private var landedSinceReveal = false
+    /// Landings at the bottom held since the last reveal, for the log.
+    @ObservationIgnored private var heldLandings = 0
+    /// The last reveal, until the list has seen its item in view.
+    @ObservationIgnored private var revealCheck: RevealLandingCheck?
     @ObservationIgnored private var nextToken = 0
     @ObservationIgnored private let now: () -> ContinuousClock.Instant
 
@@ -196,8 +204,49 @@ public final class FollowController {
             revealSettlesUntil = now() + Self.appearanceSettle
             revealedItemID = target
             landedSinceReveal = false
+            heldLandings = 0
         }
+        revealCheck = RevealLandingCheck(itemID: target, time: time)
         request(target, .top)
+    }
+
+    /// The item of a reveal whose landing the list has not yet seen in
+    /// view: after performing a scroll to it, the list reports where it
+    /// landed with ``revealLanded(_:in:)``.
+    var revealToCheck: String? {
+        revealCheck?.itemID
+    }
+
+    /// The list performed a scroll to ``revealToCheck`` and the rows have
+    /// laid out: where the item is against the view. Out of view, the list
+    /// asks for it again, a bounded number of times.
+    func revealLanded(_ placement: RowPlacement, in view: VisibleSpan) {
+        guard var check = revealCheck else { return }
+        let landing = view.description
+        let target = String(format: "%.1f s", check.time)
+        if placement != .inView, let pending = scrollRequest {
+            // A scroll to the item itself is still waiting: its landing is
+            // checked once the list has performed it. A scroll to another
+            // item replaces the reveal.
+            if pending.itemID != check.itemID {
+                Self.log.notice("The reveal of \(target, privacy: .public) gave way to a scroll to another item; it landed at \(landing, privacy: .public)")
+                revealCheck = nil
+            }
+            return
+        }
+        let outcome = check.landed(placement)
+        revealCheck = check
+        switch outcome {
+        case .landed:
+            Self.log.notice("The reveal of \(target, privacy: .public) landed in view, at \(landing, privacy: .public)")
+            revealCheck = nil
+        case let .retry(attempt):
+            Self.log.notice("The reveal of \(target, privacy: .public) landed at \(landing, privacy: .public), the item \(String(describing: placement), privacy: .public); scrolling to it again (attempt \(attempt, privacy: .public) of \(RevealLandingCheck.attempts, privacy: .public))")
+            request(check.itemID, .top)
+        case .gaveUp:
+            Self.log.notice("The reveal of \(target, privacy: .public) landed at \(landing, privacy: .public), the item \(String(describing: placement), privacy: .public), after \(RevealLandingCheck.attempts, privacy: .public) more scrolls; leaving it there")
+            revealCheck = nil
+        }
     }
 
     /// Inside a reveal's settle, with find closed, the list reached the
@@ -209,14 +258,23 @@ public final class FollowController {
             ? "after the list had landed away from the bottom"
             : "before the list landed anywhere else"
         let action = scrollRequest == nil ? "scrolling to the revealed item again" : "a scroll is still pending"
-        Self.log.notice("The transcript stays at a revealed time: the list reached the bottom \(sample.offsetY, privacy: .public) of \(sample.contentHeight, privacy: .public) pt \(order, privacy: .public); \(action, privacy: .public)")
+        heldLandings += 1
+        let count = heldLandings
+        // The list jitters at the bottom while it settles: log the first
+        // held landing and those that ask again, with how many there were.
+        if count == 1 || scrollRequest == nil {
+            Self.log.notice("The transcript stays at a revealed time: the list reached the bottom \(sample.offsetY, privacy: .public) of \(sample.contentHeight, privacy: .public) pt \(order, privacy: .public) (held landing \(count, privacy: .public)); \(action, privacy: .public)")
+        }
         if scrollRequest == nil, let revealedItemID {
             request(revealedItemID, .top)
         }
     }
 
-    /// Scrolls to an item, for example the current find match.
+    /// Scrolls to an item, for example the current find match. An explicit
+    /// scroll replaces a reveal: its landing is no longer checked, so the
+    /// reader is not pulled back from a match.
     public func scroll(to itemID: String, anchor: ScrollRequest.Anchor) {
+        revealCheck = nil
         request(itemID, anchor)
     }
 
@@ -245,6 +303,7 @@ public final class FollowController {
         isFollowing = true
         revealSettlesUntil = nil
         revealedItemID = nil
+        revealCheck = nil
         heldItems = nil
         if let newest = latest.last { request(newest.id, .bottom) }
     }

@@ -93,7 +93,10 @@ struct TranscriptionSuccessTests {
     func savedTranscriptIsReported() async throws {
         let fix = try makeFixture()
         let saved = SavedMeetings()
-        fix.service.onTranscriptSaved = { saved.ids.append($0) }
+        fix.service.onTranscriptSaved = { id, texts in
+            saved.ids.append(id)
+            saved.texts.append(texts)
+        }
         let meetingID = try await fix.createMeetingWithAudio()
         let noAudioID = try await fix.createMeetingWithoutAudio()
 
@@ -101,6 +104,7 @@ struct TranscriptionSuccessTests {
         await fix.service.transcribe(meetingID: noAudioID)
 
         #expect(saved.ids == [meetingID])
+        #expect(saved.texts == [FakeTranscriber.defaultResult.segments.map(\.text)])
     }
 
     @Test("Re-transcribe adds a new version and promotes it")
@@ -753,4 +757,5 @@ private struct BlockingOnDownloadFakeTranscriber: Transcribing, @unchecked Senda
 @MainActor
 private final class SavedMeetings {
     var ids: [UUID] = []
+    var texts: [[String]] = []
 }

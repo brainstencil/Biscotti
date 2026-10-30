@@ -378,7 +378,7 @@ public final class MeetingDetailViewModel {
         var hasTranscript: Bool?
         do {
             try await refreshData()
-            hasTranscript = detail?.preferredTranscript != nil
+            hasTranscript = MeetingChatService.hasTranscriptToAsk(detail?.preferredTranscript)
             hasAutoJumpedForPipeline = false
             await loadAudioPlayer()
         } catch {

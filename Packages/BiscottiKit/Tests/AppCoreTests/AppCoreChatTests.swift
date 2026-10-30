@@ -79,8 +79,8 @@ struct AppCoreChatTests {
         // What chat reads in the turn that completes the job, after AppCore's hook.
         let seen = AvailabilitySeen()
         let hook = fix.core.transcription.onTranscriptSaved
-        fix.core.transcription.onTranscriptSaved = { id in
-            hook?(id)
+        fix.core.transcription.onTranscriptSaved = { id, texts in
+            hook?(id, texts)
             seen.job = fix.core.transcription.jobs[id]
             seen.availability = fix.chat.state(for: id).availability
         }

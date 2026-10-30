@@ -26,8 +26,11 @@ public final class MeetingChatService {
 
     /// The meeting whose answer is being written or waits, if any.
     private(set) var answeringMeetingID: UUID?
-    /// Whether each known meeting has a preferred transcript, from the store.
+    /// Whether each known meeting has a preferred transcript with some text (``hasTranscriptToAsk(_:)``), from readings and saves.
     private var transcriptFlags: [UUID: Bool] = [:]
+    /// Meetings whose flag a pass's save set. Only a pass sets the preferred
+    /// transcript, so such a flag is always current, and readings leave it.
+    private var flagsSetBySave: Set<UUID> = []
     /// Meetings whose recording stopped and whose final pass has not ended.
     /// Until the pass is queued, no job says the transcript is on its way.
     private var pendingFinalPasses: Set<UUID> = []
@@ -111,8 +114,15 @@ public final class MeetingChatService {
     /// rest of availability is worked out on each read from observable state
     /// (`MeetingChatState.availability`), so model, setting and recording
     /// changes need no call.
-    public func transcriptWasSaved(meetingID: UUID) {
-        noteTranscript(meetingID, exists: true)
+    ///
+    /// - Parameter hasText: Whether the saved transcript holds some text
+    ///   (``hasTranscriptText(_:)``). A save replaces the preferred
+    ///   transcript, so it is the newest truth and sets the flag either way:
+    ///   a pass over silence turns chat off for the meeting. Readings never
+    ///   change a flag a save has set (`noteTranscript(_:exists:)`).
+    public func transcriptWasSaved(meetingID: UUID, hasText: Bool) {
+        transcriptFlags[meetingID] = hasText
+        flagsSetBySave.insert(meetingID)
     }
 
     /// AppCore calls this the moment a recording stops. Until
@@ -281,6 +291,7 @@ public final class MeetingChatService {
         }
         states[meetingID] = nil
         transcriptFlags[meetingID] = nil
+        flagsSetBySave.remove(meetingID)
         pendingFinalPasses.remove(meetingID)
         threadLoadTokens[meetingID] = nil
     }
@@ -307,7 +318,7 @@ public final class MeetingChatService {
     func refreshTranscriptFlag(_ meetingID: UUID) async {
         let hasTranscript: Bool
         do {
-            hasTranscript = try await store.meetingDetail(id: meetingID)?.preferredTranscript != nil
+            hasTranscript = try await Self.hasTranscriptToAsk(store.meetingDetail(id: meetingID)?.preferredTranscript)
         } catch {
             logger.error("Couldn't read the meeting: \(error.localizedDescription, privacy: .private)")
             return
@@ -315,10 +326,28 @@ public final class MeetingChatService {
         noteTranscript(meetingID, exists: hasTranscript)
     }
 
-    /// Records whether a meeting has a preferred transcript. A transcript,
-    /// once there, stays (re-transcribing replaces it), so a reading taken
-    /// before a pass saved one never undoes `transcriptWasSaved`.
+    /// Whether a meeting's preferred transcript gives chat something to ask
+    /// about: it exists and holds some text. A pass over silence saves a
+    /// transcript with no text ("Meeting transcript was empty."), which
+    /// reads as no transcript.
+    public nonisolated static func hasTranscriptToAsk(_ transcript: TranscriptData?) -> Bool {
+        transcript.map { hasTranscriptText($0.segments.map(\.text)) } ?? false
+    }
+
+    /// Whether a transcript's segment texts hold some text, by the evidence's
+    /// rule: what AppCore reports for a transcript a pass has just saved.
+    public nonisolated static func hasTranscriptText(_ segmentTexts: [String]) -> Bool {
+        segmentTexts.contains(where: ChatEvidence.hasText)
+    }
+
+    /// Records a reading of whether a meeting has a preferred transcript
+    /// with some text. Once a save has set the meeting's flag
+    /// (`transcriptWasSaved`), readings leave it: only a pass sets the
+    /// preferred transcript, so that flag is always current, and a reading
+    /// taken before the pass saved (with text or without) would be stale.
+    /// Otherwise a transcript, once read, stays.
     func noteTranscript(_ meetingID: UUID, exists: Bool) {
+        guard !flagsSetBySave.contains(meetingID) else { return }
         let flag = transcriptFlags[meetingID]
         guard flag != true, flag != exists else { return }
         transcriptFlags[meetingID] = exists

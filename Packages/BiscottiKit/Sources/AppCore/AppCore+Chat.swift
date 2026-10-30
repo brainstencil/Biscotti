@@ -55,8 +55,8 @@ extension AppCore {
         }
         // In the turn that marks the job completed, so chat never reads
         // "no transcript" in between.
-        transcription.onTranscriptSaved = { [weak self] meetingID in
-            self?.chat.transcriptWasSaved(meetingID: meetingID)
+        transcription.onTranscriptSaved = { [weak self] meetingID, segmentTexts in
+            self?.chat.transcriptWasSaved(meetingID: meetingID, hasText: MeetingChatService.hasTranscriptText(segmentTexts))
         }
     }
 

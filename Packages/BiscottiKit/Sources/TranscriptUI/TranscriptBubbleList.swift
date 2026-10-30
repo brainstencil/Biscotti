@@ -39,6 +39,8 @@ public struct TranscriptBubbleList<Header: View>: View {
     /// Created once, on first use: an initial value here would be built on
     /// every parent re-render (about 4 Hz during playback) and thrown away.
     @State private var state: ListState?
+    /// The scroll to a revealed item whose landing is checked next.
+    @State private var revealCheckToken: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// - Parameters:
@@ -149,12 +151,15 @@ public struct TranscriptBubbleList<Header: View>: View {
                     offsetY: geometry.contentOffset.y,
                     contentHeight: geometry.contentSize.height,
                     containerHeight: geometry.containerSize.height,
-                    insetTop: geometry.contentInsets.top
+                    insetTop: geometry.contentInsets.top,
+                    insetBottom: geometry.contentInsets.bottom
                 )
             } action: { _, sample in
                 let state = listState()
                 state.follower.scrollChanged(sample, latest: items)
-                state.tracker.updateScroll(offsetY: sample.offsetY, insetTop: sample.insetTop)
+                state.tracker.updateScroll(
+                    offsetY: sample.offsetY, insetTop: sample.insetTop, insetBottom: sample.insetBottom, viewportHeight: sample.containerHeight
+                )
                 publishAnchor()
             }
             .overlay(alignment: .bottom) { returnToLive }
@@ -167,6 +172,17 @@ public struct TranscriptBubbleList<Header: View>: View {
                 guard let request else { return }
                 proxy.scrollTo(request.itemID, anchor: request.anchor.unitPoint)
                 follower?.consumeScrollRequest()
+                if request.itemID == follower?.revealToCheck {
+                    revealCheckToken = request.token
+                }
+            }
+            // Once the rows have laid out after a scroll to a revealed item,
+            // where it landed: out of view, the follower asks for it again.
+            .task(id: revealCheckToken) {
+                guard revealCheckToken != nil else { return }
+                try? await Task.sleep(for: RevealLandingCheck.delay)
+                guard !Task.isCancelled, let state, let itemID = state.follower.revealToCheck else { return }
+                state.follower.revealLanded(state.tracker.placement(of: itemID), in: state.tracker.visibleSpan)
             }
             .onChange(of: items) { _, latest in
                 follower?.itemsChanged(latest)

@@ -75,11 +75,19 @@ public final class MeetingChatService {
     /// The state object for a meeting, created on first use and kept while the app runs.
     public func state(for meetingID: UUID) -> MeetingChatState
     /// Loads the meeting's threads and reopens its last open thread. Call when the meeting's
-    /// page or recording screen appears.
-    public func load(meetingID: UUID) async
-    /// Recomputes availability for every known meeting (call on model, live-setting,
-    /// recording and transcription changes; AppCore does this).
-    public func refreshAvailability()
+    /// page or recording screen appears. `hasTranscript` is the caller's reading
+    /// (`hasTranscriptToAsk(_:)`); nil reads the store.
+    public func load(meetingID: UUID, hasTranscript: Bool? = nil) async
+    /// A pass saved the meeting's preferred transcript; `hasText` from `hasTranscriptText(_:)`.
+    /// Availability itself is computed on each read from observable state
+    /// (`MeetingChatState.availability`), so model, setting and recording changes need no call.
+    public func transcriptWasSaved(meetingID: UUID, hasText: Bool)
+    /// From Stop until the final pass ends, a meeting with no transcript and no draft reads as transcribing.
+    public func finalPassWillStart(meetingID: UUID)
+    public func finalPassDidEnd(meetingID: UUID)
+    /// The one rule for "has text": a preferred transcript's, and the save hook's segment texts.
+    public nonisolated static func hasTranscriptToAsk(_ transcript: TranscriptData?) -> Bool
+    public nonisolated static func hasTranscriptText(_ segmentTexts: [String]) -> Bool
 
     public func ask(meetingID: UUID) async           // sends state.draft, then clears it
     public func stop()                                // stops the answer being written, anywhere
@@ -91,10 +99,13 @@ public final class MeetingChatService {
 
     /// AppCore calls this when a recording stops, so questions waiting for the end start.
     public func recordingDidStop(meetingID: UUID) async
+    /// AppCore calls this when it deletes a meeting: its answer stops unsaved, and its chat
+    /// state, transcript flag and save record go.
+    public func meetingWasDeleted(_ meetingID: UUID)
 }
 ```
 
-`AppCore` owns one service (`public let chat: MeetingChatService`), built in `AppCore+Live` from the broker, the store, `modelManager.activeModelURL`, `liveTranscription`, the recording state, and `transcription.jobs`. `AppCore.init` takes it as an optional last parameter with a default built from its other services, like `mcpServer`. AppCore calls `refreshAvailability()` where it already reacts to those changes, and `recordingDidStop(meetingID:)` in `finalPassAfterStop` before the final pass starts.
+`AppCore` owns one service (`public let chat: MeetingChatService`), built in `AppCore+Live` from the broker, the store, `modelManager.activeModelURL`, `liveTranscription`, the recording state, and `transcription.jobs`. `AppCore.init` takes it as an optional last parameter with a default built from its other services, like `mcpServer`. Availability needs no call when the model, the live setting or the recording changes: `MeetingChatState.availability` reads them from observable state each time. AppCore calls `finalPassWillStart(meetingID:)` in `stopRecording()` as soon as `recording.stop()` returns, `recordingDidStop(meetingID:)` in `finalPassAfterStop` before the final pass starts (a question that waited for Stop then starts), `finalPassDidEnd(meetingID:)` after the pass, and `transcriptWasSaved(meetingID:hasText:)` from `TranscriptionService.onTranscriptSaved`, inside the pass that saves a transcript.
 
 ## Internal Design
 
@@ -108,7 +119,9 @@ Computed per meeting, in this order (the first match wins):
 5. Not recording, no preferred transcript, no draft → `.noTranscript`.
 6. Otherwise `.available`.
 
-"Has a preferred transcript" comes from a cached flag that `load(meetingID:)` and `refreshAvailability()` update with `store.meetingDetail(id:)`.
+"Has a preferred transcript" comes from a cached flag. `load(meetingID:hasTranscript:)` sets it from the caller's reading of the meeting's detail, or, with nil, from `store.meetingDetail(id:)`; `transcriptWasSaved(meetingID:hasText:)` sets it when a pass saves. A preferred transcript with no text (a pass over silence) counts as none (`MeetingChatService.hasTranscriptToAsk`).
+
+Phase 10 added: a pass that saves a transcript reports it through `TranscriptionService.onTranscriptSaved(meetingID, segmentTexts)`, and AppCore calls `transcriptWasSaved(meetingID:hasText:)` with `hasTranscriptText(_:)`, the evidence's rule for "has text" (`ChatEvidence.hasText`). A save replaces the preferred transcript, so it sets the flag either way: a save with no text turns chat off for the meeting ("This meeting has no transcript to ask about"), and a later save with text turns it on. Once a save has set a meeting's flag, readings (`load`, the store) leave it: only a pass sets the preferred transcript, so that flag is always current, and a reading taken before the pass saved, with text or without, would be stale. Without a save, a transcript once read stays. Deleting the meeting (`meetingWasDeleted(_:)`) clears its flag and its save record.
 
 ### Asking
 

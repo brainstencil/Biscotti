@@ -2,6 +2,7 @@ import BiscottiTestSupport
 import DataStore
 import Foundation
 import Testing
+import Transcription
 @testable import MeetingChat
 
 @Suite("MeetingChatService -- availability")
@@ -79,9 +80,89 @@ struct MeetingChatAvailabilityTests {
         let transcriptID = try await chat.fix.store.addTranscript(result, vocabularyUsed: [], mappedEventIdentifier: nil, to: meetingID)
         try await chat.fix.store.setPreferredTranscript(transcriptID, for: meetingID)
 
-        chat.service.transcriptWasSaved(meetingID: meetingID)
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: true)
 
         #expect(chat.state(meetingID).availability == .available)
+    }
+
+    @Test("A saved transcript with no text, from a pass over silence, has nothing to ask about")
+    func emptyTranscriptReadsAsNone() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        let empty = TranscriptResult(transcriptionMethodId: "v1", language: "en", speakerCount: 0, segments: [], processingDuration: 1)
+        let transcriptID = try await chat.fix.store.addTranscript(empty, vocabularyUsed: [], mappedEventIdentifier: nil, to: meetingID)
+        try await chat.fix.store.setPreferredTranscript(transcriptID, for: meetingID)
+
+        await chat.service.load(meetingID: meetingID)
+
+        #expect(chat.state(meetingID).availability == .noTranscript)
+    }
+
+    @Test("A pass that saves an empty transcript turns chat off; a later save with text turns it on")
+    func savedEmptyTranscriptThenText() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        await chat.service.load(meetingID: meetingID, hasTranscript: false)
+        chat.service.finalPassWillStart(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .transcribing)
+
+        // After Stop on a silent recording: the pass saves no text.
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: MeetingChatService.hasTranscriptText(["", " \n "]))
+        chat.service.finalPassDidEnd(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .noTranscript)
+
+        // A Retry or re-transcription that finds speech.
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: MeetingChatService.hasTranscriptText(["We picked the blue remote."]))
+        #expect(chat.state(meetingID).availability == .available)
+
+        // And one that comes back empty turns it off again: a save is the newest truth.
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: false)
+        #expect(chat.state(meetingID).availability == .noTranscript)
+    }
+
+    @Test("A reading taken before a pass saved an empty transcript does not undo the save")
+    func staleReadingKeepsAnEmptySave() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+
+        // A re-transcription comes back empty while the page reads the old transcript.
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: false)
+        await chat.service.load(meetingID: meetingID, hasTranscript: true)
+
+        #expect(chat.state(meetingID).availability == .noTranscript)
+    }
+
+    @Test("Deleting a meeting forgets its save, so a later reading counts")
+    func deletingAMeetingForgetsTheSave() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: false)
+
+        chat.service.meetingWasDeleted(meetingID)
+        await chat.service.load(meetingID: meetingID, hasTranscript: true)
+
+        #expect(chat.state(meetingID).availability == .available)
+    }
+
+    @Test("Only a transcript holding some text counts as one to ask about")
+    func transcriptToAskNeedsText() {
+        func transcript(_ texts: [String]) -> TranscriptData {
+            TranscriptData(
+                id: UUID(), createdAt: Date(), speakerCount: 1,
+                segments: texts.enumerated().map { index, text in
+                    SegmentData(id: UUID(), speakerID: 0, speakerLabel: "Speaker 0", startTime: Double(index), endTime: Double(index) + 1, text: text)
+                },
+                speakerAssignments: [:]
+            )
+        }
+        #expect(!MeetingChatService.hasTranscriptToAsk(nil))
+        #expect(!MeetingChatService.hasTranscriptToAsk(transcript([])))
+        #expect(!MeetingChatService.hasTranscriptToAsk(transcript(["  ", "\n"])))
+        #expect(MeetingChatService.hasTranscriptToAsk(transcript(["", "We picked the blue remote."])))
     }
 
     @Test("A page that read the meeting passes whether it has a transcript; a stale reading never undoes a saved one")
@@ -96,7 +177,7 @@ struct MeetingChatAvailabilityTests {
         let otherID = try await chat.meeting()
         await chat.service.load(meetingID: otherID, hasTranscript: false)
         #expect(chat.state(otherID).availability == .noTranscript)
-        chat.service.transcriptWasSaved(meetingID: otherID)
+        chat.service.transcriptWasSaved(meetingID: otherID, hasText: true)
         // A page that read the meeting just before the pass saved its transcript.
         await chat.service.load(meetingID: otherID, hasTranscript: false)
         #expect(chat.state(otherID).availability == .available)

@@ -89,9 +89,8 @@ public enum ChatEvidence {
     private static func savedLines(_ data: TranscriptData) -> [ChatEvidenceLine] {
         var lines: [ChatEvidenceLine] = []
         var lineEnd: TimeInterval = 0
-        for segment in data.segments {
+        for segment in data.segments where hasText(segment.text) {
             let text = singleLine(segment.text)
-            guard !text.isEmpty else { continue }
             let speaker = segment.speakerID.flatMap(data.speakerName(forID:)) ?? segment.speakerLabel
             if let last = lines.last, last.speaker == speaker,
                segment.startTime - lineEnd < mergePause,
@@ -122,6 +121,13 @@ public enum ChatEvidence {
             }
         }
         return stretches.filter { $0.mayHaveHeldSound >= minimumGap }.map { $0.start ... $0.end }
+    }
+
+    /// Whether a transcript segment's text gives chat anything to read: the
+    /// one rule for "the transcript has text", used by the evidence, the
+    /// field's availability and the save hook.
+    static func hasText(_ text: String) -> Bool {
+        !singleLine(text).isEmpty
     }
 
     /// One prompt line per entry: line breaks inside the text become spaces.

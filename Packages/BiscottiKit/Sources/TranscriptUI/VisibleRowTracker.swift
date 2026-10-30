@@ -10,7 +10,9 @@ import Foundation
 /// off by the list's origin in the recording drawer (meeting chat phase 10
 /// hardware check F14). In the app the scroll view runs under the toolbar,
 /// so what the reader sees starts at the top content inset, not at y = 0.
-/// This takes the list's frame to be its scroll view's: it includes the areas under the toolbar and the pinned bottom, which the content insets cover.
+/// This takes the list's frame to be its scroll view's: it includes the
+/// areas under the toolbar and the pinned bottom, which the content insets
+/// cover.
 ///
 /// The `List` spike showed that `onAppear`/`onDisappear` overscan by one or
 /// two rows above the visible area, so appearance cannot tell which row is
@@ -34,8 +36,8 @@ final class VisibleRowTracker {
     /// The header row's height. It is the list's first row, so it covers
     /// content offsets `0 ..< headerHeight`.
     private var headerHeight: CGFloat = .infinity
-    /// The list's height, in the list's space: rows below it, less the
-    /// bottom inset, are out of view.
+    /// The scroll view's height (`containerSize`), taken to be the list's:
+    /// rows below it, less the bottom inset, are out of view.
     private var viewportHeight: CGFloat = .infinity
     /// The bottom content inset (under the meeting page's band and chat card),
     /// in the list's space.

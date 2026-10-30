@@ -21,7 +21,7 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 
 - A meeting has zero or more threads. The first question in a meeting, or after "New chat", starts a thread.
 - A thread's name is its first question, cut to about 60 characters.
-- The panel has a **History** menu listing the meeting's threads, newest first, each with its name and time, and a **New chat** button. Choosing a thread opens it.
+- The panel has a **History** menu listing the meeting's threads, most recently used first, each with its name and the time of its last question or answer, and a **New chat** button. Choosing a thread opens it.
 - Each thread can be deleted from the History menu, after a confirmation. Deleting a meeting deletes its threads.
 - Threads are saved with the meeting and survive quitting the app. For each answer, Biscotti saves its text, when it was asked, which transcript it used (the live draft up to a given time, or a saved transcript version), and whether it was stopped or failed.
 - An answer the user stops is saved with the text so far and marked "Stopped". A question whose answer failed before any text is saved with the error and a Retry button.
@@ -81,7 +81,7 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 | No AI model downloaded | The field is disabled and reads "Download the AI model to ask about meetings", with a button that opens Settings → AI Enhancements. |
 | Automatic AI analysis turned off in Settings | Chat still works. It is a manual action, like Regenerate Summary. |
 | Saved meeting with no transcript (transcription failed or never ran) | The field is disabled: "This meeting has no transcript to ask about." |
-| Saved meeting still transcribing, with no live draft | The field is disabled: "Ask once the transcript is ready." |
+| Saved meeting still transcribing, with no live draft that has text | The field is disabled: "Ask once the transcript is ready." |
 | The AI model fails to load, or its worker stops mid-answer | The answer shows an error with Retry, and keeps any text written so far, marked as incomplete. |
 | Another meeting's chat is answering | The field shows "Answering in another meeting…" and Send is disabled until it finishes. |
 

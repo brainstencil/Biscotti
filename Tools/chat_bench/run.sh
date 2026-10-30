@@ -150,8 +150,9 @@ until captured 'worker name='; do
     sleep 1
 done
 
-# The driver writes its plan line once the app's launch is done and no speech
-# model is being prepared (a new build or a purged Core ML cache compiles them).
+# The driver writes its plan line once the app's launch is done and its checks,
+# one after every sleep, have found no speech model being prepared for 3 s (a
+# new build or a purged Core ML cache compiles them).
 until captured 'plan name='; do
     if ((SECONDS - started > LAUNCH_LIMIT)); then
         abort "no plan line within $((LAUNCH_LIMIT / 60)) minutes: the app's launch or its model preparation did not end."

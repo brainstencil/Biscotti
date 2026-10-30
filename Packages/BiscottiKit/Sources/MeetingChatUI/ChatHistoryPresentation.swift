@@ -2,7 +2,7 @@ import DataStore
 import Foundation
 import MeetingChat
 
-/// The History menu's threads: newest first, each with its name and time,
+/// The History menu's threads: most recently used first, each with its name and the time of its last question or answer,
 /// the open one checked.
 struct ChatHistoryPresentation: Equatable {
     struct Item: Equatable, Identifiable {

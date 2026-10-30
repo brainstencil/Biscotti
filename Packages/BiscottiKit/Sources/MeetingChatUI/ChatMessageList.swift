@@ -30,6 +30,11 @@ struct ChatMessageList: View {
                         .padding(.top, row.spacingAbove)
                 }
             }
+            // Each thread builds its rows afresh rather than reusing the last
+            // thread's. Once, after a thread was picked from History, its first
+            // question's bubble was not drawn; never reproduced, so whether this
+            // prevents it is unproven.
+            .id(state.openThreadID)
             .padding(.horizontal, Self.sidePadding)
             .padding(.top, Tokens.spacingMD)
             .padding(.bottom, Tokens.spacingMD)

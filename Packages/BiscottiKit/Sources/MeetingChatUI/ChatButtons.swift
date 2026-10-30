@@ -11,8 +11,8 @@ struct ChatRoundButton: View {
             ZStack {
                 Circle().fill(fill)
                 if kind == .stop {
-                    // The UI design's white square; `cardFill` keeps it visible on
-                    // the `ink` circle in dark mode, where `ink` is light.
+                    // `cardFill`, not white: in dark mode `ink` is light, and a
+                    // white square would vanish on the circle.
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(Tokens.cardFill)
                         .frame(width: 9, height: 9)

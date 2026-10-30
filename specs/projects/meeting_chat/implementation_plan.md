@@ -20,6 +20,6 @@ No phase changes `Packages/Transcription`, `AudioCapture`, `LocalLLM` or `MCPSer
 - [x] Phase 8: `MeetingChatUI`: the question field, chat card, History menu, answer renderer and time chips; `HoverHighlight` moves to `DesignSystem`, `TypingDots` becomes public, the new tokens, and previews of every state in the UI design [chat_ui]
 - [x] Phase 9: Placement: the recording screen's bottom slot and "Back to chat", the transcript highlight, the meeting page's field band and card, and the ⌘J command [chat_ui]
 - [x] Phase 10: Hardware validation in Biscotti Dev: asking during a recording and on saved meetings, time links on both screens, Stop, Retry, quitting mid-answer, VoiceOver and keyboard use, and a visual review against the v2 mockups in light and dark mode [chat_ui, meeting_chat_service]
-- [ ] **Phase 11: Backlog.** Decide each open backlog item with the user, then close or dismiss them all.
+- [x] **Phase 11: Backlog.** Decide each open backlog item with the user, then close or dismiss them all.
 
 The demo video and the pull request follow phase 10, outside this plan.

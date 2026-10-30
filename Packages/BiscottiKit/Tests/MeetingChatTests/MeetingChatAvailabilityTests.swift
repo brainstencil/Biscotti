@@ -1,6 +1,7 @@
 import BiscottiTestSupport
 import DataStore
 import Foundation
+import LiveTranscriptModel
 import Testing
 import Transcription
 @testable import MeetingChat
@@ -210,6 +211,66 @@ struct MeetingChatAvailabilityTests {
         await chat.service.load(meetingID: meetingID)
 
         #expect(chat.state(meetingID).availability == .available)
+    }
+
+    @Test("A stopped recording's draft with no text is not enough to ask: it reads as transcribing, then as no transcript")
+    func draftWithoutTextIsNotEnough() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        let engine = try await chat.startRecording(meetingID)
+        await engine.emit(liveUpdate(.system, rows: [
+            LiveRow(track: .system, startTime: 3, endTime: 8, settledText: " ", tailText: "\n")
+        ], transcribedThrough: 10, settledThrough: 10))
+        try await waitUntil("the live row") { chat.live.rows.count == 1 }
+        await chat.stopRecording(meetingID)
+        chat.service.finalPassWillStart(meetingID: meetingID)
+        await chat.service.load(meetingID: meetingID, hasTranscript: false)
+
+        #expect(chat.live.draft(for: meetingID) != nil, "the draft is held")
+        #expect(chat.state(meetingID).availability == .transcribing)
+
+        chat.service.finalPassDidEnd(meetingID: meetingID)
+        #expect(chat.state(meetingID).availability == .noTranscript)
+    }
+
+    @Test("A save that records no text wins over a held draft with text")
+    func savedNoTextWinsOverDraft() async throws {
+        let chat = try ChatHarness()
+        defer { chat.fix.cleanup() }
+        let meetingID = try await chat.meeting()
+        let engine = try await chat.startRecording(meetingID)
+        try await chat.sendLiveRows(engine)
+        await chat.stopRecording(meetingID)
+        chat.service.finalPassWillStart(meetingID: meetingID)
+        await chat.service.load(meetingID: meetingID, hasTranscript: false)
+        #expect(chat.state(meetingID).availability == .available, "the draft has text")
+
+        // The pass over the recording saves no text; AppCore releases the draft only after the pass ends.
+        chat.service.transcriptWasSaved(meetingID: meetingID, hasText: false)
+        #expect(chat.state(meetingID).availability == .transcribing)
+        chat.service.finalPassDidEnd(meetingID: meetingID)
+
+        #expect(chat.live.draft(for: meetingID) != nil, "the draft is still held")
+        #expect(chat.state(meetingID).availability == .noTranscript)
+    }
+
+    @Test("A draft has text to ask about exactly when its evidence has a line")
+    func draftTextFollowsTheEvidence() {
+        let drafts = [
+            ChatFixtures.snapshot(rows: []),
+            ChatFixtures.snapshot(rows: [LiveRow(track: .mic, startTime: 0, endTime: 2, settledText: "  ", tailText: "\n ")]),
+            ChatFixtures.snapshot(rows: [LiveRow(track: .mic, startTime: 0, endTime: 2, settledText: "", tailText: "Blue.")]),
+            ChatFixtures.snapshot(rows: [
+                LiveRow(track: .mic, startTime: 0, endTime: 2, settledText: " "),
+                LiveRow(track: .system, startTime: 3, endTime: 5, settledText: "We picked the blue remote.")
+            ])
+        ]
+
+        #expect(drafts.map(ChatEvidence.hasText) == [false, false, true, true])
+        for draft in drafts {
+            #expect(ChatEvidence.hasText(draft) == !ChatEvidence.lines(for: .draft(draft)).isEmpty)
+        }
     }
 
     @Test("While one meeting answers, the others cannot send")

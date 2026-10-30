@@ -130,6 +130,12 @@ public enum ChatEvidence {
         !singleLine(text).isEmpty
     }
 
+    /// Whether a draft gives chat a line to read: a row whose text, its tail
+    /// joined as the draft's evidence joins it, has text by the same rule.
+    static func hasText(_ draft: LiveTranscriptSnapshot) -> Bool {
+        draft.rows.contains { hasText($0.settledText + $0.tailText) }
+    }
+
     /// One prompt line per entry: line breaks inside the text become spaces.
     private static func singleLine(_ text: String) -> String {
         text.components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespaces)

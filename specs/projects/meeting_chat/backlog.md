@@ -12,8 +12,9 @@
   - **Why:** coupled to B1.
   - **Route:** task run 2
   - **Status:** closed — see the commit "Catch up the live transcript from 0:00 when it starts mid-recording"
-- [ ] **B3 — The launch wait can end before the final pass's model has compiled**
+- [x] **B3 — The launch wait can end before the final pass's model has compiled**
   In `lowpower-e2b-aborted-1` (phase 6), `whisper-large-v3` preparation started at 18:00:39. The driver's plan line came at 18:04:21, with no "Prepared …" line and no failure line in between. The next launch then compiled the model again (409 s). So `isPreparingModels` went false while the compile was unfinished. The cause is in `TranscriptionService` or the worker, outside phase 6. The analyzed runs are not affected: in `baseline` and `lowpower-e2b`, "Prepared" comes 3 s before the plan line. The write-up's "Launch wait" note and `Tools/chat_bench/README.md` (around line 37) claim the launch always waits out a compile; correct them once this is decided.
   - **Decision (2026-10-29):** fix — pre-flight found the cause in this project's own debug-only wait loop (`AppCore+Live.swift`, added in 3881d9f), not in TranscriptionService or the worker: after each sleep it does not check preparation again, so a process stall of more than 3 s ends the wait early. Check `isPreparingModels` after every sleep, end only after 3 s in which every check found no preparation, log one line when the wait ends, and add a test with an injected clock. Correct the research README's "Launch wait" note, `Tools/chat_bench/README.md`, the `run.sh` comment and the wait's doc comment.
   - **Why:** shipping users are not affected (DEBUG builds with `-chatLoadTest` only), but the measurement tool should not record beside a compile while its docs say it cannot. Decided by the manager with the user's go-ahead to take the recommendations on the remaining items.
   - **Route:** phase run (last)
+  - **Status:** closed — see the commit "Close meeting_chat phase 11: launch wait, card on Stop, silent drafts"

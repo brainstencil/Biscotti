@@ -309,7 +309,7 @@ public final class MeetingChatService {
         if recordingMeetingID() == meetingID {
             return live.isEnabled ? .available : .liveTranscriptOff
         }
-        if transcriptFlags[meetingID] == true || live.draft(for: meetingID) != nil {
+        if transcriptFlags[meetingID] == true || hasDraftToAsk(meetingID) {
             return .available
         }
         return isTranscribing(meetingID) || pendingFinalPasses.contains(meetingID) ? .transcribing : .noTranscript
@@ -386,5 +386,17 @@ public final class MeetingChatService {
     static func stopwatch(on clock: some Clock<Duration>) -> @Sendable () -> Duration {
         let start = clock.now
         return { start.duration(to: clock.now) }
+    }
+}
+
+extension MeetingChatService {
+    /// Whether a stopped recording's held draft gives chat something to ask
+    /// about: one of its rows has text by the evidence's rule. A save that
+    /// recorded no text wins, since it replaces the transcript the draft
+    /// stood in for.
+    func hasDraftToAsk(_ meetingID: UUID) -> Bool {
+        let savedWithoutText = flagsSetBySave.contains(meetingID) && transcriptFlags[meetingID] == false
+        guard !savedWithoutText, let draft = live.draft(for: meetingID) else { return false }
+        return ChatEvidence.hasText(draft)
     }
 }

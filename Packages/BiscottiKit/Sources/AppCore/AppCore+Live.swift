@@ -339,13 +339,48 @@ private struct LiveTranscriberAdapter: Transcribing {
         /// Core ML cache that macOS purged under low disk space, compiles the
         /// models for minutes first, and a recording started meanwhile holds
         /// its live transcript until the live model's compile ends.
-        func waitUntilModelsPrepared(settle: Duration = .seconds(3), poll: Duration = .milliseconds(500)) async {
-            let clock = ContinuousClock()
-            var idleSince = clock.now
-            while clock.now - idleSince < settle, !Task.isCancelled {
-                if transcription.isPreparingModels { idleSince = clock.now }
-                try? await Task.sleep(for: poll)
+        ///
+        /// It checks the preparation after every sleep of `poll`, however long
+        /// the sleep took, and ends only once every check over `settle` found
+        /// no model being prepared. So a sleep that overran, as when the
+        /// process stalls during a long compile, never ends the wait
+        /// unchecked. Writes one `chat-load` line, `launch-wait-done
+        /// seconds=`, when it ends.
+        ///
+        /// - Returns: How long it waited, on `clock`.
+        @discardableResult
+        func waitUntilModelsPrepared(
+            settle: Duration = .seconds(3),
+            poll: Duration = .milliseconds(500),
+            clock: any Clock<Duration> = ContinuousClock()
+        ) async -> Duration {
+            let waited = await waitWhilePreparing(settle: settle, poll: poll, on: clock)
+            if !Task.isCancelled {
+                let seconds = Double(waited.components.seconds) + Double(waited.components.attoseconds) / 1e18
+                chatLoadLogger.info("launch-wait-done seconds=\(String(format: "%.1f", seconds), privacy: .public)")
             }
+            return waited
+        }
+
+        private func waitWhilePreparing<C: Clock<Duration>>(settle: Duration, poll: Duration, on clock: C) async -> Duration {
+            let start = clock.now
+            // The first of the latest checks in a row that found no preparation.
+            var idleSince: C.Instant?
+            while !Task.isCancelled {
+                let now = clock.now
+                if transcription.isPreparingModels {
+                    idleSince = nil
+                } else {
+                    let since = idleSince ?? now
+                    if since.duration(to: now) >= settle { break }
+                    idleSince = since
+                }
+                try? await clock.sleep(for: poll)
+            }
+            return start.duration(to: clock.now)
         }
     }
+
+    /// The chat load driver's category, which `Tools/chat_bench` captures.
+    private let chatLoadLogger = Logger(subsystem: "net.scosman.biscotti", category: "chat-load")
 #endif

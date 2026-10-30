@@ -60,12 +60,56 @@ struct AppCoreChatTests {
         try await waitUntil("the question to wait") { state.messages.last?.state == .streaming(.waitingForRecordingToEnd) }
 
         _ = await fix.core.stopRecording()
+        #expect(state.isCardOpen, "a question waiting for Stop keeps the card open")
         try await waitUntil("the answer") { !state.isAnswering }
 
         let threadID = try #require(state.openThreadID)
         let thread = try #require(try await fix.store.chatThread(id: threadID))
         #expect(thread.messages.last?.state == .complete)
         #expect(thread.messages.last?.basis == .draft)
+        await fix.core.awaitPendingTranscription()
+    }
+
+    @Test("Stop closes the chat card and keeps its thread, unless an answer is being written", arguments: [false, true])
+    func stopClosesCardUnlessAnswering(answering: Bool) async throws {
+        let clock = TestClock()
+        let engines = FakeLiveEngineFactory()
+        let live = makeFakeLiveService(
+            engines: engines,
+            timing: LiveTiming(publishInterval: .zero, stopDeadline: .milliseconds(200), pumpInterval: .milliseconds(5), finishMargin: .milliseconds(50))
+        )
+        let fix = try makeCoreFixture(modelDownloaded: true, liveTranscription: live, testName: "AppCoreChatTests")
+        defer { fix.cleanup() }
+        fix.llmOpener.script.streams = [ScriptedStream(["Blue."], tokenDelay: answering ? .seconds(1) : nil, clock: clock)]
+        await fix.core.startRecording()
+        let meetingID = try #require(fix.core.recording.state.meetingID)
+        try await waitUntil("a live engine") { engines.engines.count == 1 }
+        let engine = engines.engines[0]
+        try await waitUntil("its config") { await engine.config != nil }
+        await engine.emit(liveUpdate(.system, rows: [
+            LiveRow(track: .system, startTime: 3, endTime: 8, settledText: "Let's design the remote.")
+        ], transcribedThrough: 10, settledThrough: 10))
+        try await waitUntil("the live row") { !live.rows.isEmpty }
+
+        let state = fix.chat.state(for: meetingID)
+        state.draft = "What did we design?"
+        await fix.chat.ask(meetingID: meetingID)
+        if answering {
+            try await waitUntil("the wait for the first token") { clock.pendingSleepCount == 1 }
+        } else {
+            try await waitUntil("the answer") { !state.isAnswering }
+        }
+        #expect(state.isCardOpen)
+
+        _ = await fix.core.stopRecording()
+
+        #expect(fix.core.meetingsSelection == [meetingID])
+        #expect(state.isCardOpen == answering)
+        #expect(state.openThreadID != nil, "the field reads \"Continue chat\"")
+        if answering {
+            clock.advance(by: .seconds(1))
+            try await waitUntil("the answer") { !state.isAnswering }
+        }
         await fix.core.awaitPendingTranscription()
     }
 

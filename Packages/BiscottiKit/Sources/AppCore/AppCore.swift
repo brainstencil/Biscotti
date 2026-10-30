@@ -631,6 +631,11 @@ public final class AppCore {
         await reloadSummaries()
         runState = .idle
         select(meetingID)
+        // The meeting page opens with the chat card closed, its thread still
+        // open, so the field reads "Continue chat". An answer being written,
+        // or waiting for Stop, keeps the card open to show it.
+        let chatState = chat.state(for: meetingID)
+        if !chatState.isAnswering { chatState.isCardOpen = false }
 
         pendingTranscriptionTask = finalPassAfterStop(of: meetingID, liveFinish: liveFinish)
 

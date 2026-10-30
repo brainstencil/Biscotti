@@ -22,28 +22,28 @@ One component everywhere: a 40 pt pill, `cardFill` with a 1 pt `cardStroke` bord
 | A thread exists, card closed | "Continue chat" | Send, disabled until there is text |
 | Card open | "Ask a follow-up" | Send, disabled until there is text |
 | Text typed | (the text) | Send: `accentFill` (sage) with a white arrow |
-| An answer is being written | (empty) | Stop: an `ink` circle with a 9 pt white rounded square |
+| An answer is being written | (empty) | Stop: an `ink` circle with a 9 pt `cardFill` rounded square (white in light mode; it stays visible in dark mode, where `ink` is light) |
 
 - Return sends. Shift-Return adds a line, and the field grows up to five lines, then scrolls. Esc stops an answer that is being written; with no answer running, Esc closes the card.
-- Over 1,800 characters, a small gray count appears at the field's right, such as "1,950 / 2,000". Typing stops at 2,000.
+- Over 1,800 characters, a small gray count appears under the text, at the field's right, such as "1,950 / 2,000". Typing stops at 2,000.
 - The footnote, "Answers come from the on-device AI and can be wrong.", is 10.5 pt `inkTertiary`, centered under the field whenever the card is open.
 
-**Unavailable:** the field keeps its shape but has a light gray fill and no shadow. The reason replaces the placeholder in 13.5 pt `inkSecondary`, and an action, when there is one, is a small bordered button inside the field's right end: `cardFill`, `cardStroke` border, `chipRadius`, 12.5 pt sage medium text.
+**Unavailable:** the field keeps its shape but has a light gray fill and no shadow. The reason replaces the placeholder in 13.5 pt `inkSecondaryLegible`, and an action, when there is one, is a small bordered button inside the field's right end: `cardFill`, `cardStroke` border, `chipRadius`, 12.5 pt sage medium text.
 
 | Situation | Text in the field | Action button |
 |---|---|---|
 | No AI model downloaded | "Download the AI model to ask about meetings" | "Open Settings" (Settings → AI Enhancements) |
 | Live transcript off, during a recording | "Turn on the live transcript to ask during the meeting" | "Turn On" |
 | Saved meeting with no transcript | "This meeting has no transcript to ask about" | none |
-| Still transcribing, no draft | "Ask once the transcript is ready" | none |
+| Still transcribing, no draft with text | "Ask once the transcript is ready" | none |
 | Another meeting's chat is answering | "Answering in another meeting…" | none |
 
 ### The chat card
 
-The transcript drawer's card style: `cardFill`, 1 pt `cardStroke` border, `drawerRadius` (16 pt), and on the saved meeting page a soft shadow. Its top edge is draggable.
+The transcript drawer's card style: `cardFill`, 0.5 pt `cardStroke` border, `drawerRadius` (16 pt), and on the saved meeting page a soft shadow. Its top edge is draggable.
 
 - **Header**, 43.5 pt like the drawer's, with a `hairline` under it. At the left, the History button: a clock-with-arrow icon and a small chevron, `inkSecondary`, no text. At the right, "New chat" (a square with a pencil) and a minus that closes the card, matching the drawer's icon buttons.
-- **History menu:** a standard macOS menu from the History button, which shows its pressed state while the menu is open. It lists the meeting's threads by name (the first question, cut to about 60 characters), newest first, with the time at the right in gray ("5:21 PM" for today, "Oct 26" for earlier days). The open thread has a checkmark. After a separator come "New Chat" (⌘N while the card has focus) and "Delete This Chat…". Deleting asks first, in a standard alert: "Delete this chat?", "This can't be undone.", with Delete and Cancel buttons.
+- **History menu:** a standard macOS menu from the History button, which shows its pressed state while the menu is open. It lists the meeting's threads by name (the first question, cut to about 60 characters), most recently used first, with the time of its last question or answer as a gray line under the name ("5:21 PM" for today, "Oct 26" for earlier days); SwiftUI menus cannot right-align text. The open thread has a checkmark. After a separator come "New Chat" (⌘N while the card has focus) and "Delete This Chat…". Deleting asks first, in a standard alert: "Delete this chat?", "This can't be undone.", with Delete and Cancel buttons.
 - **New chat:** closes the card and puts the cursor in the field, which reads "Ask about this meeting". The new thread exists once its first question is sent.
 - **Body:** a scrolling list with 24 pt side padding, anchored to the bottom, so a short thread sits just above the field.
   - **A question** is a right-aligned bubble, at most 72% of the width: `cardFill` with a 1 pt `cardStroke` border, `bubbleRadius` (14 pt), 7 × 12 pt padding, 14 pt `ink` text. It is deliberately neither transcript colour: "Others" bubbles are `neutralChip` and "You" bubbles are `softSageFill`.
@@ -51,8 +51,8 @@ The transcript drawer's card style: `cardFill`, 1 pt `cardStroke` border, `drawe
   - **Times** in an answer are chips: 11.5 pt JetBrains Mono, sage text on `accentWashSoft`, 5 pt radius, 1 × 5 pt padding, with no parentheses. The pointer becomes a hand over them.
   - **Under a finished answer**, 8 pt below, a left-aligned row: a 14 pt copy icon in `inkTertiary`, then 11.5 pt `inkSecondary` text: "Based on the transcript through 0:46" during a recording, "Based on the draft transcript" for a draft, nothing otherwise. Copying shows "Copied" briefly in place of the icon.
   - **Turns** are 26 pt apart.
-  - **Before the first word**, a status line in `inkSecondary` with a small spinner: "Loading the AI model…", "Waiting for the summary to finish…", "Answers when the recording stops" (no Mac waits for Stop by default, per Backlog decision B4; the wait-for-Stop mode remains, reachable only from tests and the chat load driver) or "Thinking…".
-  - **While an answer streams**, three 4 pt `inkTertiary` dots follow its last word. The list follows the newest text unless the user scrolls up, in which case a round down-arrow button appears at the bottom center; it jumps back to the newest text.
+  - **Before the first word**, a status line in `inkSecondaryLegible` with a small spinner: "Loading the AI model…", "Waiting for the summary to finish…", "Answers when the recording stops" (no Mac waits for Stop by default, per Backlog decision B4; the wait-for-Stop mode remains, reachable only from tests and the chat load driver) or "Thinking…".
+  - **While an answer streams**, three 4 pt `inkTertiary` dots sit on their own line under its text. The list follows the newest text unless the user scrolls up, in which case a round down-arrow button appears at the bottom center; it jumps back to the newest text.
   - **A stopped answer** keeps its text, and its row reads "Stopped".
   - **A failed answer** shows the error in a short sentence, in `signalRedText`, with a "Retry" button.
 
@@ -70,6 +70,7 @@ The transcript drawer's card style: `cardFill`, 1 pt `cardStroke` border, `drawe
 - **The card** (M5): rises from the field, as wide as it, with the field inside the card's footer and the footnote under the field. Its bottom edge sits 7 pt above the playback bar. At first it covers the lower 60% of the page; its top edge is draggable between 200 pt and the full page height, and the height is remembered across meetings.
 - **A time chip:** switches to the Transcript tab, scrolls the cited segment into the visible area above the card, gives it the find highlight for 2 seconds, and moves the playback position there without playing. The card stays open.
 - **Changing meetings:** selecting another meeting closes the card. Each meeting remembers its last open thread while the app runs, so its field reads "Continue chat".
+- **After Stop:** the meeting page opens with the card closed and the field reading "Continue chat"; one click reopens the thread. While an answer is being written, or waits for Stop, the card stays open.
 - **Unavailable** (M6): the field shows the reason and, for a missing model, "Open Settings".
 
 ## Accessibility and appearance

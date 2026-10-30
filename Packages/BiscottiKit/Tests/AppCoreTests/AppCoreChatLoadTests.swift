@@ -48,6 +48,54 @@
             #expect(wait.ended)
         }
 
+        @Test("A sleep that overruns during a compile is followed by a check, so the launch wait outlasts the compile")
+        func launchWaitChecksAfterStalledSleep() async throws {
+            let fix = try makeCoreFixture(testName: "AppCoreChatLoadTests")
+            defer { fix.cleanup() }
+            let clock = TestClock()
+            fix.core.transcription.modelsBeingPrepared = ["openai_whisper-large-v3"]
+            let wait = startLaunchWait(fix, clock: clock)
+
+            // A 0.5 s sleep that lasts 4 s: the process stalled during the compile.
+            try await advanceWhenSleeping(clock, by: .seconds(4))
+            try await waitUntil("the next sleep, or the end") { clock.pendingSleepCount == 1 || wait.waited != nil }
+            try #require(wait.waited == nil, "the check after the stall found the compile")
+
+            // The compile ends at 4 s; the checks from 4.5 s find none.
+            fix.core.transcription.modelsBeingPrepared = []
+            for _ in 0 ..< 6 {
+                try await advanceWhenSleeping(clock, by: .milliseconds(500))
+            }
+            try await waitUntil("the sleep after the check at 7 s, or the end") { clock.pendingSleepCount == 1 || wait.waited != nil }
+            #expect(wait.waited == nil, "2.5 s of checks that found none")
+
+            try await advanceWhenSleeping(clock, by: .milliseconds(500))
+            try await waitUntil("the end of the wait") { wait.waited != nil }
+            #expect(wait.waited == .milliseconds(7500), "3 s after the first check that found none")
+        }
+
+        @Test("A compile that starts during a stalled sleep is seen before the launch wait can end")
+        func launchWaitSeesCompileStartedDuringStall() async throws {
+            let fix = try makeCoreFixture(testName: "AppCoreChatLoadTests")
+            defer { fix.cleanup() }
+            let clock = TestClock()
+            let wait = startLaunchWait(fix, clock: clock)
+
+            // Idle at 0 s; the final pass's model starts compiling during a 4 s stall.
+            try await waitUntil("the first sleep") { clock.pendingSleepCount == 1 }
+            fix.core.transcription.modelsBeingPrepared = ["openai_whisper-large-v3"]
+            clock.advance(by: .seconds(4))
+            try await waitUntil("the next sleep, or the end") { clock.pendingSleepCount == 1 || wait.waited != nil }
+            try #require(wait.waited == nil, "the check after the stall found the compile")
+
+            fix.core.transcription.modelsBeingPrepared = []
+            for _ in 0 ..< 7 {
+                try await advanceWhenSleeping(clock, by: .milliseconds(500))
+            }
+            try await waitUntil("the end of the wait") { wait.waited != nil }
+            #expect(wait.waited == .milliseconds(7500), "3 s after the first check that found none, at 4.5 s")
+        }
+
         @Test("A plan's model is selected as Settings selects it, and only once downloaded")
         func selectModelAsSettings() async throws {
             // The fixture's download is the catalog's first model, Gemma 4 12B.
@@ -85,5 +133,24 @@
     @MainActor
     private final class LaunchWait {
         var ended = false
+        /// What the wait returned, once it ended.
+        var waited: Duration?
+    }
+
+    /// Starts the launch wait at its defaults (3 s settle, 0.5 s poll) on `clock`.
+    @MainActor
+    private func startLaunchWait(_ fix: CoreFixture, clock: TestClock) -> LaunchWait {
+        let wait = LaunchWait()
+        Task {
+            wait.waited = await fix.core.waitUntilModelsPrepared(clock: clock)
+        }
+        return wait
+    }
+
+    /// Advances `clock` once the launch wait sleeps on it.
+    @MainActor
+    private func advanceWhenSleeping(_ clock: TestClock, by duration: Duration) async throws {
+        try await waitUntil("a sleep on the clock") { clock.pendingSleepCount > 0 }
+        clock.advance(by: duration)
     }
 #endif

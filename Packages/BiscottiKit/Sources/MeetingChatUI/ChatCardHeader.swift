@@ -51,8 +51,8 @@ struct ChatCardHeader: View {
 }
 
 /// The History button: a clock-with-arrow icon and a chevron, with the
-/// pressed look while its menu is open. The menu lists the threads, newest
-/// first, the open one checked, then New Chat and Delete This Chat….
+/// pressed look while its menu is open. The menu lists the threads, most
+/// recently used first, the open one checked, then New Chat and Delete This Chat….
 struct ChatHistoryMenu: View {
     let state: MeetingChatState
     let service: MeetingChatService

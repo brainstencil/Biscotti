@@ -24,8 +24,8 @@ struct SystemGapFillTests {
             let filled = writer.processBuffer(
                 hostTimeNanos: hostNanos,
                 bufferFrameCount: framesPerBuffer,
-                channelCount: 1,
-                sampleRate: rate,
+                bufferSampleRate: rate,
+                clientFormat: ctx.clientFormat,
                 file: ctx.file
             )
             #expect(filled == 0, "Continuous buffers should not trigger gap fill")
@@ -61,8 +61,8 @@ struct SystemGapFillTests {
         let filled1 = writer.processBuffer(
             hostTimeNanos: startNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         #expect(filled1 == 0, "First buffer should not trigger gap fill")
@@ -73,8 +73,8 @@ struct SystemGapFillTests {
         let filled2 = writer.processBuffer(
             hostTimeNanos: secondNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         #expect(filled2 > 0, "A 2 s gap should trigger gap fill")
@@ -107,8 +107,8 @@ struct SystemGapFillTests {
         writer.processBuffer(
             hostTimeNanos: startNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         ctx.writeToneBuffer(frameCount: framesPerBuffer, channelCount: 1)
@@ -119,8 +119,8 @@ struct SystemGapFillTests {
         let filled = writer.processBuffer(
             hostTimeNanos: postReconnectNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         #expect(filled > 0, "Gap across reconnect should be filled")
@@ -150,8 +150,8 @@ struct SystemGapFillTests {
         writer.processBuffer(
             hostTimeNanos: startNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: tapRate,
+            bufferSampleRate: tapRate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         ctx.writeToneBuffer(frameCount: framesPerBuffer, channelCount: 1)
@@ -161,8 +161,8 @@ struct SystemGapFillTests {
         let filled = writer.processBuffer(
             hostTimeNanos: secondNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: tapRate,
+            bufferSampleRate: tapRate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         #expect(filled > 0, "Gap should be filled despite rate mismatch")
@@ -176,6 +176,50 @@ struct SystemGapFillTests {
         let fileDuration = try ctx.fileDuration()
         #expect(abs(fileDuration - expectedDuration) < 0.15,
                 "File \(fileDuration)s vs expected \(expectedDuration)s with rate mismatch")
+    }
+
+    /// After a reconnect the tap can run at a rate other than the file's
+    /// fixed client rate. The buffer's duration comes from the tap rate;
+    /// the silence is counted and written at the client rate.
+    @Test("Gap fill writes client-rate silence when the tap rate differs")
+    func gapFillAtClientRateForOtherTapRate() throws {
+        let clientRate = 48000.0
+        let ctx = try SystemTestFile(clientRate: clientRate)
+        defer { ctx.dispose() }
+        let writer = SystemGapFillWriter()
+
+        let tapRate = 44100.0
+        let framesPerBuffer: UInt32 = 4410 // 100 ms at 44.1 kHz
+        let bufferDuration = Double(framesPerBuffer) / tapRate
+        let gapSeconds = 2.0
+        let startNanos: UInt64 = 1_000_000_000
+
+        writer.processBuffer(
+            hostTimeNanos: startNanos,
+            bufferFrameCount: framesPerBuffer,
+            bufferSampleRate: tapRate,
+            clientFormat: ctx.clientFormat,
+            file: ctx.file
+        )
+        // What the converter writes for the first buffer: 100 ms at 48 kHz.
+        ctx.writeToneBuffer(frameCount: 4800, channelCount: 1)
+
+        let secondNanos = startNanos + UInt64((bufferDuration + gapSeconds) * 1_000_000_000)
+        let filled = writer.processBuffer(
+            hostTimeNanos: secondNanos,
+            bufferFrameCount: framesPerBuffer,
+            bufferSampleRate: tapRate,
+            clientFormat: ctx.clientFormat,
+            file: ctx.file
+        )
+        // A duration taken at the client rate would see a 2.008 s gap.
+        #expect(filled == Int((gapSeconds * clientRate).rounded()))
+        ctx.writeToneBuffer(frameCount: 4800, channelCount: 1)
+
+        let expectedDuration = bufferDuration * 2 + gapSeconds
+        let fileDuration = try ctx.fileDuration()
+        #expect(abs(fileDuration - expectedDuration) < 0.15,
+                "File \(fileDuration)s vs expected \(expectedDuration)s")
     }
 
     /// Jitter gap (below 100 ms threshold) must not trigger silence fill.
@@ -194,8 +238,8 @@ struct SystemGapFillTests {
         writer.processBuffer(
             hostTimeNanos: startNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         ctx.writeToneBuffer(frameCount: framesPerBuffer, channelCount: 1)
@@ -205,8 +249,8 @@ struct SystemGapFillTests {
         let filled = writer.processBuffer(
             hostTimeNanos: secondNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         #expect(filled == 0, "1 ms jitter should not trigger gap fill")
@@ -236,8 +280,8 @@ struct SystemGapFillTests {
         writer.processBuffer(
             hostTimeNanos: startNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         ctx.writeToneBuffer(frameCount: framesPerBuffer, channelCount: 1)
@@ -246,8 +290,8 @@ struct SystemGapFillTests {
         writer.processBuffer(
             hostTimeNanos: secondNanos,
             bufferFrameCount: framesPerBuffer,
-            channelCount: 1,
-            sampleRate: rate,
+            bufferSampleRate: rate,
+            clientFormat: ctx.clientFormat,
             file: ctx.file
         )
         ctx.writeToneBuffer(frameCount: framesPerBuffer, channelCount: 1)

@@ -45,18 +45,6 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
     /// The queue the next `start(writingTo:)` copies written audio to.
     private var liveQueue: LiveAudioQueue?
 
-    /// Writer-thread-only flags for deferred client format setup.
-    private var clientFormatConfigured = false
-    private var clientFormatFailed = false
-
-    /// The channel count used in the last successful `configureClientFormat`
-    /// call. Compared on reconnect to avoid a redundant
-    /// `kExtAudioFileProperty_ClientDataFormat` set (which replaces the
-    /// AAC encoder's internal AudioConverter mid-stream -- harmless when
-    /// the format genuinely changed, but a needless converter reset and
-    /// potential flush of stale encoder state when it didn't).
-    private var lastConfiguredChannelCount: UInt32 = 0
-
     // MARK: - Two-track alignment
 
     /// Host-clock seconds of the mic's first delivered sample -- the
@@ -85,12 +73,17 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
     /// Encoder settings used for ADTS AAC file creation.
     private let encoder: EncoderSettings
 
+    /// The Core Audio calls that need a real process tap.
+    private let tapHardware: TapHardware
+
     init(
         permissionChecker: LiveSystemPermissionChecker = LiveSystemPermissionChecker(),
-        encoder: EncoderSettings = .voice
+        encoder: EncoderSettings = .voice,
+        tapHardware: TapHardware = .live
     ) {
         self.permissionChecker = permissionChecker
         self.encoder = encoder
+        self.tapHardware = tapHardware
     }
 
     /// Stores the mic's first-buffer host-clock anchor so the writer thread
@@ -123,14 +116,10 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         // detection is disabled on the retry.
         permissionChecker.reset()
 
-        writeStep.begin(
-            micAnchorSeconds: micAnchorSeconds,
-            systemStartWall: CACurrentMediaTime(),
-            liveQueue: liveQueue
-        )
+        beginWriteStep()
 
         do {
-            try createTapAndAggregate()
+            try tapHardware.create(self)
 
             #if DEBUG
                 if Self.verboseDiagnostics {
@@ -142,7 +131,7 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
             #endif
             try openAudioFile(url: url)
             startWriterThread()
-            try startIOProc()
+            try tapHardware.startIO(self, ringBuffer)
         } catch {
             // Partial-start cleanup. `startWriterThread()` launches a thread and
             // `openAudioFile()` opens the file *before* `startIOProc()`, so a
@@ -155,6 +144,17 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         }
 
         capturingFlag.store(true, ordering: .releasing)
+    }
+
+    /// Readies `writeStep` for a new file with the current mic anchor and live
+    /// queue. `start()` calls it; internal so tests that open a file without
+    /// a tap can do the same after `setMicAnchor(_:)`.
+    func beginWriteStep() {
+        writeStep.begin(
+            micAnchorSeconds: micAnchorSeconds,
+            systemStartWall: CACurrentMediaTime(),
+            liveQueue: liveQueue
+        )
     }
 
     func stop() async {
@@ -171,13 +171,15 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
 
     /// Reconnects hardware without reopening the audio file.
     ///
-    /// Re-queries the new tap's format and updates `tapSampleRate` so
-    /// the ExtAudioFile client format matches the data the new IOProc
-    /// delivers. Only resets the client-format flag (triggering a
-    /// mid-stream `kExtAudioFileProperty_ClientDataFormat` set and AAC
-    /// converter replacement) when the tap's rate or channel count
-    /// actually changed -- avoiding a disruptive converter reset when
-    /// the format is identical.
+    /// Re-queries the new tap's format and updates `tapSampleRate`, so the
+    /// writer reads the new IOProc's buffers at the right rate. The file's
+    /// client format does not change: the writer converts every buffer to
+    /// it (see `SystemFormatConverter`).
+    ///
+    /// A failed attempt releases the hardware but keeps the recording: the
+    /// file stays open and `capturingFlag` stays set, so the next attempt (a
+    /// retry or a later route change) rebuilds the tap and `stop()` still
+    /// closes the file.
     ///
     /// Leading silence is NOT re-written: alignment was established on
     /// the first buffer of the session.
@@ -191,14 +193,20 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         // fail intermittently because the device graph is mid-reconfiguration.
         try await Task.sleep(for: Self.reconnectSettleDelay)
 
-        do {
-            try createTapAndAggregate()
+        // A stop() during the settle delay ended the recording.
+        guard capturingFlag.load(ordering: .acquiring) else { return }
 
-            let formatChanged = detectAndApplyFormatChange()
-            if formatChanged {
-                clientFormatConfigured = false
-                clientFormatFailed = false
+        do {
+            try tapHardware.create(self)
+
+            // Without the new tap's rate, its buffers would be read at the
+            // old one. Fail this attempt, like a failed tap creation, so the
+            // recorder retries it.
+            guard let tapFormat = usableTapFormat() else {
+                logger.warning("Reconnect: the new tap has no usable format")
+                throw CaptureError.tapCreationFailed(-2)
             }
+            applyTapFormat(tapFormat)
 
             #if DEBUG
                 if Self.verboseDiagnostics {
@@ -210,51 +218,30 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
             #endif
 
             startWriterThread()
-            try startIOProc()
+            try tapHardware.startIO(self, ringBuffer)
         } catch {
             // Partial-reconnect cleanup: tear down any hardware and the
-            // writer thread that were created before the throw. Without
-            // this, a failed startIOProc() leaks a running writer
-            // thread and orphaned aggregate/tap, and the capturingFlag
-            // reset below prevents stop() from ever cleaning them up.
+            // writer thread created before the throw. The recording stays
+            // open (see above), so `capturingFlag` is left set.
             teardownHardware()
-            capturingFlag.store(false, ordering: .releasing)
             throw error
         }
     }
 
-    /// Queries the new tap's format after reconnect, updates `tapSampleRate`,
-    /// and returns whether the format changed (requiring client-format reset).
+    /// Applies the format of the tap that a reconnect just created. Only
+    /// `tapSampleRate` changes. A stale rate would misread every buffer's
+    /// duration and stretch or squeeze the track. The writer rebuilds its
+    /// converter when the first buffer in the new format arrives; the
+    /// file's client format stays fixed, because ExtAudioFile refuses a new
+    /// one after the first write (`-66565`).
     ///
-    /// If the sample rate or channel count changed, the ExtAudioFile client
-    /// format must be updated so the encoder interprets incoming buffers at
-    /// the correct rate/layout. A stale tapSampleRate caused the AAC encoder
-    /// to misinterpret every buffer's duration, inflating or deflating the
-    /// file and producing garbage audio.
-    private func detectAndApplyFormatChange() -> Bool {
-        var formatChanged = false
-        if let newFormat = queryTapFormat() {
-            let preReconnectRate = tapSampleRate
-            tapSampleRate = newFormat.mSampleRate
-            if abs(preReconnectRate - tapSampleRate) > 1 {
-                logger.info(
-                    "Reconnect: tap sample rate changed \(preReconnectRate, privacy: .public) → \(newFormat.mSampleRate, privacy: .public)"
-                )
-                formatChanged = true
-            }
-            let prevChannels = lastConfiguredChannelCount
-            if newFormat.mChannelsPerFrame != prevChannels {
-                logger.info(
-                    "Reconnect: tap channel count changed \(prevChannels, privacy: .public) → \(newFormat.mChannelsPerFrame, privacy: .public)"
-                )
-                formatChanged = true
-            }
-        } else {
-            // Can't query -- force reconfigure to be safe.
-            logger.warning("Reconnect: tap format query failed — forcing client format reconfigure")
-            formatChanged = true
-        }
-        return formatChanged
+    /// Internal so tests can simulate a reconnect without hardware.
+    func applyTapFormat(_ format: AudioStreamBasicDescription) {
+        let previousRate = tapSampleRate
+        tapSampleRate = format.mSampleRate
+        logger.notice(
+            "Reconnect: tap format \(format.mSampleRate, privacy: .public) Hz \(format.mChannelsPerFrame, privacy: .public) ch (was \(previousRate, privacy: .public) Hz)"
+        )
     }
 
     // MARK: - Setup
@@ -334,7 +321,11 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         writerDone.signal()
     }
 
-    private func processEntry(_ entry: AudioRingBuffer.Entry) {
+    /// Feeds the permission checker, then hands the buffer to `writeStep`,
+    /// which converts it to the client format and writes it with any silence
+    /// that must come before it. Writer-thread only; internal so tests can
+    /// feed synthetic tap buffers through the real write path.
+    func processEntry(_ entry: AudioRingBuffer.Entry) {
         let frameCount = Int(entry.frameCount)
         let channelCount = Int(max(entry.channelCount, 1))
         let sampleCount = frameCount * channelCount
@@ -349,27 +340,6 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
         }
 
         guard let file = audioFile else { return }
-        guard !clientFormatFailed else { return }
-
-        // First buffer (or first after reconnect): set client format from
-        // actual delivered channel count (ground truth). ExtAudioFile
-        // handles N-ch → mono downmix. On reconnect the flag is cleared
-        // ONLY if the tap's channel count or sample rate actually changed
-        // -- skipping the mid-stream converter replacement when the format
-        // is identical avoids disrupting the AAC encoder's internal state.
-        if !clientFormatConfigured {
-            if configureClientFormat(
-                channelCount: UInt32(channelCount), file: file
-            ) {
-                clientFormatConfigured = true
-            } else {
-                clientFormatFailed = true
-                logger.error(
-                    "System audio track stopped: client format configuration failed. Audio captured before this point is preserved in the file."
-                )
-                return
-            }
-        }
 
         #if DEBUG
             if Self.verboseDiagnostics {
@@ -482,7 +452,8 @@ final class LiveSystemCaptureEngine: CaptureEngine, @unchecked Sendable { // swi
 
     /// Releases the hardware, then closes the file. The lock makes the file
     /// close only after the writer has finished with it, even when another
-    /// teardown is joining that writer.
+    /// teardown is joining that writer. Internal so tests can close a file
+    /// written without a tap.
     func teardown() {
         teardownLock.withLock { _ in
             releaseHardware()
@@ -539,18 +510,36 @@ extension LiveSystemCaptureEngine {
         }
     }
 
+    /// Opens the recording's file for the tap that `start()` just created.
     private func openAudioFile(url: URL) throws {
-        guard let tapFormat = queryTapFormat() else {
+        guard let tapFormat = usableTapFormat() else {
             throw CaptureError.tapCreationFailed(-2)
         }
+        try openAudioFile(url: url, tapSampleRate: tapFormat.mSampleRate)
+    }
 
-        tapSampleRate = tapFormat.mSampleRate
-        clientFormatConfigured = false
-        clientFormatFailed = false
-        lastConfiguredChannelCount = 0
+    /// The tap's format, or nil when it cannot be read or its rate is not a
+    /// positive finite number. Every buffer duration is computed from the
+    /// rate, and the integer conversions of those durations trap on an
+    /// infinite or NaN value.
+    private func usableTapFormat() -> AudioStreamBasicDescription? {
+        guard let format = tapHardware.format(self),
+              format.mSampleRate.isFinite, format.mSampleRate > 0
+        else { return nil }
+        return format
+    }
 
-        // Create ADTS AAC file. Client format deferred to processEntry()
-        // where the actual channel count is known from IOProc data.
+    /// Creates the ADTS AAC file and sets its client format once, before
+    /// any write, to `SystemFormatConverter.clientFormat` — whatever the tap
+    /// delivers. ExtAudioFile refuses a client format change after the
+    /// first write (`-66565`, `kExtAudioFileError_InvalidOperationOrder`),
+    /// so tap format changes are handled by converting each buffer instead.
+    ///
+    /// Internal so tests can write a real file without a tap.
+    func openAudioFile(url: URL, tapSampleRate: Double) throws {
+        self.tapSampleRate = tapSampleRate
+        writeStep.resetFormatConverter()
+
         var outputASBD = encoder.outputASBD()
         var fileRef: ExtAudioFileRef?
         let createStatus = ExtAudioFileCreateWithURL(
@@ -565,9 +554,28 @@ extension LiveSystemCaptureEngine {
             throw CaptureError.tapCreationFailed(createStatus)
         }
 
+        var clientASBD = SystemFormatConverter.clientFormat.streamDescription.pointee
+        let clientStatus = ExtAudioFileSetProperty(
+            file,
+            kExtAudioFileProperty_ClientDataFormat,
+            UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
+            &clientASBD
+        )
+        guard clientStatus == noErr else {
+            ExtAudioFileDispose(file)
+            throw CaptureError.tapCreationFailed(clientStatus)
+        }
+
+        let brStatus = EncoderSettings.applyBitRate(to: file, bitRate: encoder.bitRate)
+        if brStatus != noErr {
+            logger.warning("applyBitRate returned \(brStatus, privacy: .public) — using encoder default")
+        }
+
         audioFile = file
     }
 
+    /// Reads the tap's stream format (`kAudioTapPropertyFormat`), or nil
+    /// if the query fails.
     private func queryTapFormat() -> AudioStreamBasicDescription? {
         var format = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
@@ -580,58 +588,28 @@ extension LiveSystemCaptureEngine {
         guard status == noErr else { return nil }
         return format
     }
+}
 
-    /// Sets client format (interleaved float PCM) and encoder bit rate.
-    /// Returns `true` on success.
-    ///
-    /// On mid-stream failure (e.g. `-66565` / `kExtAudioFileError_InvalidOperationOrder`:
-    /// ExtAudioFile refuses a different client rate or channel count after the
-    /// first write, as on a reconnect that changes the tap format), returns
-    /// `false` and sets `clientFormatFailed`
-    /// via the caller. This preserves audio already written to the file --
-    /// the system track will contain everything captured before the route change.
-    /// Reopening the file is not viable because `ExtAudioFileCreateWithURL` with
-    /// `eraseFile` would truncate the entire session's system audio.
-    ///
-    /// Thread-safety: only the writer thread calls this during capture.
-    private func configureClientFormat(
-        channelCount: UInt32, file: ExtAudioFileRef
-    ) -> Bool {
-        let rate = tapSampleRate
-        let bytesPerFrame = UInt32(MemoryLayout<Float>.size) * channelCount
-        var clientASBD = AudioStreamBasicDescription(
-            mSampleRate: tapSampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: bytesPerFrame,
-            mFramesPerPacket: 1,
-            mBytesPerFrame: bytesPerFrame,
-            mChannelsPerFrame: channelCount,
-            mBitsPerChannel: 32,
-            mReserved: 0
+// MARK: - Hardware seam
+
+extension LiveSystemCaptureEngine {
+    /// The calls that need a real process tap. Production uses `live`; tests
+    /// replace them to run `start()`, `reconnect()` and `stop()`, with the
+    /// real writer thread and file, on a machine without a tap.
+    struct TapHardware {
+        /// Creates the process tap and its aggregate device.
+        var create: @Sendable (LiveSystemCaptureEngine) throws -> Void
+        /// Reads the tap's stream format, or nil if the query fails.
+        var format: @Sendable (LiveSystemCaptureEngine) -> AudioStreamBasicDescription?
+        /// Starts the IOProc that enqueues tap buffers into the ring buffer.
+        var startIO: @Sendable (LiveSystemCaptureEngine, AudioRingBuffer) throws -> Void
+
+        /// The Core Audio implementation.
+        static let live = TapHardware(
+            create: { try $0.createTapAndAggregate() },
+            format: { $0.queryTapFormat() },
+            startIO: { engine, _ in try engine.startIOProc() }
         )
-
-        let clientStatus = ExtAudioFileSetProperty(
-            file,
-            kExtAudioFileProperty_ClientDataFormat,
-            UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
-            &clientASBD
-        )
-        guard clientStatus == noErr else {
-            logger.error(
-                "Failed to set client format (\(channelCount, privacy: .public) ch, rate=\(rate, privacy: .public)): \(clientStatus, privacy: .public)"
-            )
-            recordWriteError(clientStatus)
-            return false
-        }
-
-        let brStatus = EncoderSettings.applyBitRate(to: file, bitRate: encoder.bitRate)
-        if brStatus != noErr {
-            logger.warning("applyBitRate returned \(brStatus, privacy: .public) — using encoder default")
-        }
-
-        lastConfiguredChannelCount = channelCount
-        return true
     }
 }
 

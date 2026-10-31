@@ -35,7 +35,7 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 
 ## Answers
 
-- An answer streams in word by word, as full-width text under the question, which shows as a small right-aligned bubble. Before the first word, a status line says what is happening: "Loading the AI model…", "Waiting for the summary to finish…" or "Thinking…".
+- An answer streams in word by word, as full-width text under the question, which shows as a small right-aligned bubble. Before the first word, the answer's place shows what it waits for: the AI model loading (an estimated bar, see [Waiting for the AI model](#waiting-for-the-ai-model)), "Waiting for the summary to finish…", or, while the AI reads the meeting, typing dots.
 - Answers use the same Markdown rendering as the Summary tab: bold, bullet and numbered lists, short headings.
 - **Times.** Answers refer to moments as times, such as 12:34, and each time is a link:
   - During a recording, it opens the transcript drawer at that moment.
@@ -46,6 +46,18 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 - **Cutoff.** During a recording, each answer ends with "Based on the transcript through 12:34". On a saved meeting whose final transcript is not ready yet, it ends with "Based on the draft transcript".
 - Each answer has a **Copy** button that copies its text.
 - A footnote under the field reads "Answers come from the on-device AI and can be wrong."
+
+## Waiting for the AI model
+
+Decided 30 October 2026 (Backlog B10), after the first question of a session showed "Loading the AI model…" with a spinner for 30–60 s. A first answer has two waits: the model loading into memory, then the model reading the meeting before its first word. Each is shown on its own, and the first can be avoided or started early.
+
+- **"Keep the AI model ready"**, in Settings → AI Enhancements under the model choice, **off by default**. On, the model loads soon after launch, once the launch work that needs the GPU (preparing the speech models) has ended, and stays loaded instead of closing 3 minutes after the last answer. Its footnote states the memory cost of the selected model, from its file size: "Uses about 7 GB of memory while Biscotti is open." Turning it off lets the model close after the usual 3 minutes. It needs a downloaded model.
+- **The recording memory rule wins over the setting.** On Macs with less than 24 GB, the model still closes after each answer during a recording, and a kept model closes when the recording starts. It loads again once the recording stops. The footnote says so on those Macs.
+- **Loading starts when the question field takes the cursor**, not on Send, when the model is not loaded and chat is available for that meeting. If no question follows, the model closes after the usual 3 minutes. No load starts while one is running, while a question waits for Stop, or during a recording on a Mac that would close the model at once.
+- **The load shows an estimated bar**, not a spinner: "Loading the AI model… 12 s", over a bar that fills against the last load time of that model on this Mac. The bar never shows the load as done before it is: it stops short of full until the load ends. If the load runs past the last time, the text says so: "Loading the AI model… 52 s, longer than last time". Before the model's first load on this Mac, the text counts the seconds over a bar with no estimate. VoiceOver reads "Loading the AI model", and is not told every second.
+- **The wait for the first word shows typing dots** in the answer's place, at once after Send or after the load ends, until the first word. VoiceOver hears "Thinking". If no answer comes, the dots end all the same: an error shows its message with Retry, Stop shows "Stopped", and an answer that ends with no words reads "The AI gave no answer", with Retry.
+- **No skeleton.** A placeholder shaped like the answer fits neither wait: the answer has no known layout, a skeleton looks the same at 3 s and at 30 s, and skeletons suit waits under about 10 s (Interface Lineage review, `demo/meeting-chat/interface-lineage-audit.md` §7, §8, §11).
+- Each model load's duration is logged, so a slow load like the 30–60 s report can be compared with the phase 6 measurement (about 1.4–17.5 s).
 
 ## What the AI is given
 

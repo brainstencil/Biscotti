@@ -90,18 +90,18 @@ extension MeetingChatService {
             if run.stopRequested { throw CancellationError() }
             let record = try await meetingRecord(for: run.meetingID)
             guard let model = modelURL() else { throw LLMBrokerError.modelUnavailable }
-            let onWait: @Sendable (LLMWait) -> Void = { [weak self] wait in
-                Task { @MainActor in self?.apply(wait, to: run) }
-            }
+            let load = ChatLoadTimer()
+            // A load that failed, or a lease that ended before its body, ends the timer here.
+            defer { modelLoadDidEnd(load, model: model, loaded: false, reason: "question") }
             let leaseAnswer = try await broker.withLease(
                 model: model,
                 priority: .interactive,
                 purpose: Self.leasePurpose,
                 keepAlive: policy.keepAlive(isRecording: isRecording),
-                onWait: onWait
+                onWait: waitReporter(load, model: model) { [weak self] wait in self?.apply(wait, to: run) }
             ) { [weak self] session in
                 guard let self else { throw CancellationError() }
-                return try await answer(run, record: record, in: session)
+                return try await answer(run, record: record, afterLoad: load, of: model, in: session)
             }
             return switch leaseAnswer {
             case let .read(sawDone): .finished(sawDone: sawDone)
@@ -136,9 +136,12 @@ extension MeetingChatService {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
-    /// Runs inside the lease: builds the prompt, sizes the context and reads
-    /// the answer.
-    private func answer(_ run: AnswerRun, record: ChatMeetingRecord, in session: any LLMSession) async throws -> LeaseAnswer {
+    /// Runs inside the lease: ends the model load's timer, builds the
+    /// prompt, sizes the context and reads the answer.
+    private func answer(
+        _ run: AnswerRun, record: ChatMeetingRecord, afterLoad load: ChatLoadTimer, of model: URL, in session: any LLMSession
+    ) async throws -> LeaseAnswer {
+        modelLoadDidEnd(load, model: model, loaded: true, reason: "question")
         // A Stop during the model load ends the answer before a prompt exists.
         try Task.checkCancellation()
         run.leaseStarted = true
@@ -229,10 +232,11 @@ extension MeetingChatService {
         guard self.run === run, !run.leaseStarted else { return }
         switch wait {
         case .loadingModel:
-            // The broker reports the load once it has lent the model.
+            // The broker reports the load once it has lent the model. The
+            // view already says so (`modelLoadDidStart`).
             report(.leaseStarted(run, loadingModel: true))
-            run.view.state = .streaming(.loadingModel)
             logger.info("Lease wait: loading the model")
+            return
         case let .queued(behind) where behind == BrokeredLLMRunner.defaultPurpose:
             run.view.state = .streaming(.waitingForSummary)
             logger.info("Lease wait: behind the summary")

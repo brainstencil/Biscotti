@@ -22,6 +22,12 @@ public final class MeetingChatService {
     /// it; without it, `turnOnLiveTranscript()` turns it on for this run only.
     @ObservationIgnored public var onTurnOnLiveTranscript: (@MainActor () async -> Void)?
 
+    /// "Keep the AI model ready" (`setKeepsModelReady(_:)`), off by default.
+    public internal(set) var keepsModelReady: Bool
+    /// The model load an answer waits for, or a load ahead of a question,
+    /// while it runs. The loading bar fills against its estimate.
+    public internal(set) var modelLoad: ChatModelLoad?
+
     // MARK: - Observed by `MeetingChatState.availability`
 
     /// The meeting whose answer is being written or waits, if any.
@@ -50,6 +56,8 @@ public final class MeetingChatService {
     let elapsed: @Sendable () -> Duration
     /// Each meeting's open thread and draft, kept across launches.
     let restore: ChatRestore
+    /// The "Keep the AI model ready" setting and each model's last load time.
+    let modelRecords: ChatModelRecords
     let logger = Logger(subsystem: "net.scosman.biscotti", category: "meeting-chat")
 
     // MARK: - Answer state
@@ -63,6 +71,8 @@ public final class MeetingChatService {
     @ObservationIgnored var threadLoadTokens: [UUID: Int] = [:]
     /// Answer view updates while answers streamed. Tests read it.
     @ObservationIgnored var answerFlushCount = 0
+    /// The model loading before a question (`loadModelAhead(reason:)`).
+    @ObservationIgnored var loadAheadTask: Task<Void, Never>?
 
     #if DEBUG
         /// The chat load driver's listener (`report(_:)`). Debug builds only.
@@ -77,7 +87,8 @@ public final class MeetingChatService {
     ///     answer being written.
     ///   - clock: Times `answerFlushInterval`.
     ///   - defaults: Keeps each meeting's open thread and draft across
-    ///     launches; nil keeps them while the app runs only.
+    ///     launches, "Keep the AI model ready" and each model's last load
+    ///     time; nil keeps them while the app runs only.
     public init(
         store: any ChatStoring,
         broker: LLMBroker,
@@ -100,6 +111,8 @@ public final class MeetingChatService {
         self.answerFlushInterval = answerFlushInterval
         elapsed = Self.stopwatch(on: clock)
         restore = ChatRestore(defaults: defaults)
+        modelRecords = ChatModelRecords(defaults: defaults)
+        keepsModelReady = modelRecords.keepsModelReady
     }
 
     /// The state object for a meeting, created on first use and kept while
@@ -249,46 +262,6 @@ public final class MeetingChatService {
         }
     }
 
-    // MARK: - Recording
-
-    /// AppCore calls this once a recording runs. On a Mac that closes the
-    /// model after each answer during a recording, the model kept loaded by
-    /// an earlier answer or summary is closed too, so its memory is free for
-    /// the meeting.
-    public func recordingDidStart() async {
-        if let meetingID = recordingMeetingID() {
-            report(.recordingStarted(meetingID: meetingID))
-        }
-        guard policy.closesAfterAnswer(isRecording: true) else { return }
-        logger.info("Recording started: closing the AI model when it is idle")
-        await broker.closeWhenIdle()
-    }
-
-    /// AppCore calls this when a recording stops, so a question waiting for
-    /// the end starts.
-    public func recordingDidStop(meetingID: UUID) async {
-        report(.recordingStopped(meetingID: meetingID))
-        guard let run, run.isParked else { return }
-        run.isParked = false
-        run.mayWaitForRecording = false
-        run.view.state = .streaming(.thinking)
-        publish(run)
-        logger.info("Recording stopped: answering the waiting question")
-        start(run)
-    }
-
-    /// The field's "Turn On" action while the live transcript is off. Live
-    /// transcription starts and catches up from the start of the recording;
-    /// until it has, answers cover what it has transcribed so far, and their
-    /// footer says how far that reaches.
-    public func turnOnLiveTranscript() async {
-        if let onTurnOnLiveTranscript {
-            await onTurnOnLiveTranscript()
-        } else {
-            await live.setEnabled(true)
-        }
-    }
-
     // MARK: - Availability
 
     /// In the component doc's order; the first match wins.
@@ -360,6 +333,11 @@ public final class MeetingChatService {
 
     func start(_ run: AnswerRun) {
         self.run = run
+        // Behind a load ahead of the question: the answer waits for it.
+        if modelLoad != nil {
+            run.view.state = .streaming(.loadingModel)
+            publish(run)
+        }
         answerTask = Task { [weak self] in
             await self?.runAnswer(run)
         }
@@ -379,6 +357,54 @@ public final class MeetingChatService {
     static func stopwatch(on clock: some Clock<Duration>) -> @Sendable () -> Duration {
         let start = clock.now
         return { start.duration(to: clock.now) }
+    }
+}
+
+public extension MeetingChatService {
+    // MARK: - Recording
+
+    /// AppCore calls this once a recording runs. On a Mac that closes the
+    /// model after each answer during a recording, the model kept loaded by
+    /// an earlier answer or summary, or by "Keep the AI model ready", is
+    /// closed too, so its memory is free for the meeting.
+    func recordingDidStart() async {
+        if let meetingID = recordingMeetingID() {
+            report(.recordingStarted(meetingID: meetingID))
+        }
+        await applyModelHold()
+        guard policy.closesAfterAnswer(isRecording: true) else { return }
+        logger.info("Recording started: closing the AI model when it is idle")
+        await broker.closeWhenIdle()
+    }
+
+    /// AppCore calls this when a recording stops, so a question waiting for
+    /// the end starts. With "Keep the AI model ready" on, a model closed for
+    /// the recording loads again, without holding up the caller.
+    func recordingDidStop(meetingID: UUID) async {
+        report(.recordingStopped(meetingID: meetingID))
+        await applyModelHold()
+        if keepsModelReady {
+            loadModelAhead(reason: "recording stopped")
+        }
+        guard let run, run.isParked else { return }
+        run.isParked = false
+        run.mayWaitForRecording = false
+        run.view.state = .streaming(.thinking)
+        publish(run)
+        logger.info("Recording stopped: answering the waiting question")
+        start(run)
+    }
+
+    /// The field's "Turn On" action while the live transcript is off. Live
+    /// transcription starts and catches up from the start of the recording;
+    /// until it has, answers cover what it has transcribed so far, and their
+    /// footer says how far that reaches.
+    func turnOnLiveTranscript() async {
+        if let onTurnOnLiveTranscript {
+            await onTurnOnLiveTranscript()
+        } else {
+            await live.setEnabled(true)
+        }
     }
 }
 

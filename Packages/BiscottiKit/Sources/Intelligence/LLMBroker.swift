@@ -104,6 +104,12 @@ public actor LLMBroker {
     /// Set by `closeWhenIdle()` while a lease runs: close when the broker is
     /// next idle.
     private var closeRequested = false
+    /// Set by `setKeepsModelLoaded(_:)`: a lease that ends with `.keepOpen`
+    /// leaves the connection open with no idle close.
+    private var keepsModelLoaded = false
+    /// The keep-alive of the lease that ended last, which applies again when
+    /// `keepsModelLoaded` is turned off.
+    private var lastKeepAlive: LLMKeepAlive?
 
     public init(
         opener: any LLMConnectionOpening,
@@ -163,7 +169,7 @@ public actor LLMBroker {
         let streams = StreamLedger()
         let session: BrokerSession
         do {
-            session = try await connectedSession(model: model, streams: streams, onWait: onWait)
+            session = try await connectedSession(model: model, purpose: purpose, streams: streams, onWait: onWait)
         } catch {
             await endLease(lease, dropReason: nil)
             throw error
@@ -178,6 +184,45 @@ public actor LLMBroker {
             logger.info("Lease end: \(purpose, privacy: .public) after \(Self.milliseconds(.now - started)) ms with \(String(describing: type(of: error)), privacy: .public)")
             await endLease(lease, dropReason: Self.dropReason(error: error, streams: streams))
             throw error
+        }
+    }
+
+    /// Loads `model` before anyone needs it, so the next lease finds it
+    /// loaded. The load is a lease of its own with an empty body: it reports
+    /// `.loadingModel` through `onWait`, requests made meanwhile wait for it,
+    /// and `keepAlive` applies when it ends, as for any lease.
+    ///
+    /// Does nothing while a lease runs or waits, since that lease loads the
+    /// model itself, or when `model` is already loaded.
+    ///
+    /// - Returns: Whether it loaded the model.
+    /// - Throws: As `withLease`, when the model cannot load.
+    public func loadAhead(
+        model: URL,
+        priority: LLMPriority,
+        purpose: String,
+        keepAlive: LLMKeepAlive? = nil,
+        onWait: @escaping @Sendable (LLMWait) -> Void = { _ in }
+    ) async throws -> Bool {
+        guard running == nil, waiters.isEmpty, connection?.model != model else { return false }
+        // `withLease` takes the lease before its first suspension, so no
+        // request can start between this check and the load.
+        try await withLease(model: model, priority: priority, purpose: purpose, keepAlive: keepAlive, onWait: onWait) { _ in }
+        return true
+    }
+
+    /// While `keeps` is true, the connection stays open after a lease that
+    /// ends with `.keepOpen`, with no idle close. A `.close` lease and
+    /// `closeWhenIdle()` still close it. Turning it off starts the idle close
+    /// of the lease that ended last, from now.
+    public func setKeepsModelLoaded(_ keeps: Bool) {
+        guard keeps != keepsModelLoaded else { return }
+        keepsModelLoaded = keeps
+        logger.info("Keep the model loaded: \(keeps, privacy: .public)")
+        if keeps {
+            cancelIdleClose()
+        } else if running == nil, connection != nil, case let .keepOpen(delay) = lastKeepAlive ?? defaultKeepAlive {
+            idleClose = makeIdleClose(after: delay)
         }
     }
 
@@ -252,19 +297,22 @@ public actor LLMBroker {
         }
 
         running = nil
+        lastKeepAlive = lease.keepAlive
         if closeRequested || lease.keepAlive == .close {
             closeRequested = false
             await closeConnection(reason: "lease ended")
         } else if case let .keepOpen(delay) = lease.keepAlive, connection != nil {
             cancelIdleClose()
-            idleClose = makeIdleClose(after: delay)
+            if !keepsModelLoaded {
+                idleClose = makeIdleClose(after: delay)
+            }
         }
     }
 
     // MARK: - Connection
 
     private func connectedSession(
-        model: URL, streams: StreamLedger, onWait: @Sendable (LLMWait) -> Void
+        model: URL, purpose: String, streams: StreamLedger, onWait: @Sendable (LLMWait) -> Void
     ) async throws -> BrokerSession {
         if let connection, connection.model == model {
             return BrokerSession(broker: self, connectionID: connection.id, session: connection.session, streams: streams)
@@ -286,7 +334,7 @@ public actor LLMBroker {
         let id = nextID
         nextID += 1
         connection = Connection(id: id, session: session, model: model)
-        logger.info("Model opened: \(model.lastPathComponent, privacy: .public) in \(Self.milliseconds(.now - started)) ms")
+        logger.info("Model opened: \(model.lastPathComponent, privacy: .public) in \(Self.milliseconds(.now - started)) ms, for \(purpose, privacy: .public)")
         return BrokerSession(broker: self, connectionID: id, session: session, streams: streams)
     }
 

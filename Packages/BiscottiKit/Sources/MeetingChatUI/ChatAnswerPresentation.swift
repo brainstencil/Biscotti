@@ -7,6 +7,8 @@ struct ChatAnswerFooterPresentation: Equatable {
     static let stoppedText = "Stopped"
     static let interruptedText = "Interrupted"
     static let unsavedText = "Couldn't save this answer"
+    /// A stream that ended with no words: its slot would otherwise be blank.
+    static let noAnswerText = "The AI gave no answer"
 
     /// The answer has text to copy.
     var showsCopy = false
@@ -32,7 +34,10 @@ struct ChatAnswerFooterPresentation: Equatable {
         case .streaming:
             return nil
         case .complete:
-            break
+            if !footer.showsCopy {
+                footer.note = noAnswerText
+                footer.showsRetry = true
+            }
         case .stopped:
             footer.note = stoppedText
         case .interrupted:
@@ -46,34 +51,53 @@ struct ChatAnswerFooterPresentation: Equatable {
     }
 }
 
+/// What an answer shows in its place under the question.
+enum ChatAnswerSlot: Equatable {
+    /// "Loading the AI model…" over the estimated bar (`ChatModelLoadPresentation`).
+    case loadingModel
+    /// A small spinner and what the answer waits for.
+    case status(String)
+    /// Typing dots alone: the model reads the prompt before its first word.
+    case firstWord
+    /// The answer's blocks, with typing dots under them while it streams.
+    case text(isStreaming: Bool)
+}
+
 /// Texts for an answer being written, and for VoiceOver.
 enum ChatAnswerPresentation {
-    /// The status line before the first word; nil once words arrive.
-    static func statusText(_ status: ChatAnswerStatus) -> String? {
-        switch status {
-        case .loadingModel: "Loading the AI model…"
-        case .waitingForSummary: "Waiting for the summary to finish…"
-        case .waitingForRecordingToEnd: "Answers when the recording stops"
-        case .thinking: "Thinking…"
-        case .streaming: nil
-        }
-    }
+    /// VoiceOver's name for the typing dots before the first word.
+    static let firstWordLabel = "Thinking"
+    /// VoiceOver's name for the typing dots under words being written.
+    static let writingLabel = "Writing"
 
-    /// The status line for a message, if it shows one instead of text.
-    static func statusText(for message: ChatMessageView) -> String? {
-        guard case let .streaming(status) = message.state, message.text.isEmpty else { return nil }
-        return statusText(status)
+    /// What the answer shows now. Before its first word, the wait: the load's
+    /// bar, a status line, or the dots while the model reads the prompt.
+    /// Then its text, with the dots under it until it ends. An answer that
+    /// ended has no dots, whatever ended it: its footer says how.
+    static func slot(for message: ChatMessageView) -> ChatAnswerSlot {
+        guard case let .streaming(status) = message.state else { return .text(isStreaming: false) }
+        guard message.text.isEmpty else { return .text(isStreaming: true) }
+        return switch status {
+        case .loadingModel: .loadingModel
+        case .waitingForSummary: .status("Waiting for the summary to finish…")
+        case .waitingForRecordingToEnd: .status("Answers when the recording stops")
+        case .thinking, .streaming: .firstWord
+        }
     }
 
     /// What VoiceOver announces once an answer ends: the answer, not word by word.
     static func finishedAnnouncement(_ message: ChatMessageView) -> String? {
         switch message.state {
         case .streaming: nil
-        case .complete: ChatAnswerCopy.plainText(message.blocks)
+        case .complete: completeAnnouncement(ChatAnswerCopy.plainText(message.blocks))
         case .stopped: "Answer stopped"
         case .interrupted: "Answer interrupted"
         case let .failed(error): error
         }
+    }
+
+    private static func completeAnnouncement(_ text: String) -> String {
+        text.isEmpty ? ChatAnswerFooterPresentation.noAnswerText : text
     }
 }
 

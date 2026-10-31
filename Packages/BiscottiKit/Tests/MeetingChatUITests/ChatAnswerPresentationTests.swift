@@ -65,17 +65,62 @@ struct ChatAnswerPresentationTests {
 
     // MARK: - Status
 
-    @Test("before the first word, the status line says what the answer waits for")
-    func statusTexts() {
-        #expect(ChatAnswerPresentation.statusText(.loadingModel) == "Loading the AI model…")
-        #expect(ChatAnswerPresentation.statusText(.waitingForSummary) == "Waiting for the summary to finish…")
-        #expect(ChatAnswerPresentation.statusText(.waitingForRecordingToEnd) == "Answers when the recording stops")
-        #expect(ChatAnswerPresentation.statusText(.thinking) == "Thinking…")
-        #expect(ChatAnswerPresentation.statusText(.streaming) == nil)
+    @Test("before the first word the slot shows the wait: the load's bar, a status line, or the dots")
+    func slotsBeforeTheFirstWord() {
+        #expect(ChatAnswerPresentation.slot(for: answer("", state: .streaming(.loadingModel))) == .loadingModel)
+        #expect(ChatAnswerPresentation.slot(for: answer("", state: .streaming(.waitingForSummary))) == .status("Waiting for the summary to finish…"))
+        #expect(ChatAnswerPresentation.slot(for: answer("", state: .streaming(.waitingForRecordingToEnd))) == .status("Answers when the recording stops"))
+        #expect(ChatAnswerPresentation.slot(for: answer("", state: .streaming(.thinking))) == .firstWord)
+        #expect(ChatAnswerPresentation.slot(for: answer("", state: .streaming(.streaming))) == .firstWord)
+    }
 
-        #expect(ChatAnswerPresentation.statusText(for: answer("", state: .streaming(.thinking))) == "Thinking…")
-        #expect(ChatAnswerPresentation.statusText(for: answer("Words", state: .streaming(.streaming))) == nil)
-        #expect(ChatAnswerPresentation.statusText(for: answer()) == nil)
+    @Test("the dots follow the words while they stream and end with the answer, however it ends")
+    func dotsEndWithTheAnswer() {
+        #expect(ChatAnswerPresentation.slot(for: answer("Words", state: .streaming(.streaming))) == .text(isStreaming: true))
+        let endings: [ChatMessageView.State] = [.complete, .stopped, .interrupted, .failed("The AI model couldn't start.")]
+        for ending in endings {
+            #expect(ChatAnswerPresentation.slot(for: answer("", state: ending)) == .text(isStreaming: false), "\(ending)")
+            #expect(ChatAnswerPresentation.slot(for: answer(state: ending)) == .text(isStreaming: false), "\(ending)")
+        }
+    }
+
+    @Test("a stream that ended with no words says so, with Retry, and is announced")
+    func noAnswerFooter() {
+        let empty = answer("", state: .complete, footer: nil)
+        #expect(ChatAnswerFooterPresentation.make(empty) == ChatAnswerFooterPresentation(note: "The AI gave no answer", showsRetry: true))
+        #expect(ChatAnswerPresentation.finishedAnnouncement(empty) == "The AI gave no answer")
+    }
+
+    // MARK: - Model load
+
+    @Test("with no earlier load the bar is indeterminate and the text counts the seconds")
+    func loadWithoutEstimate() {
+        let load = ChatModelLoadPresentation.make(elapsed: .milliseconds(12900), estimate: nil)
+        #expect(load == ChatModelLoadPresentation(text: "Loading the AI model… 12 s", fraction: nil, accessibilityText: "Loading the AI model"))
+        #expect(ChatModelLoadPresentation.make(elapsed: nil, estimate: .seconds(20)).text == "Loading the AI model…")
+    }
+
+    @Test("the bar fills against the last load and stops short of full until the load ends")
+    func loadFillsAgainstEstimate() {
+        let estimate = Duration.seconds(20)
+        #expect(ChatModelLoadPresentation.make(elapsed: .zero, estimate: estimate).fraction == 0)
+        #expect(ChatModelLoadPresentation.make(elapsed: .seconds(10), estimate: estimate).fraction == 0.5)
+        #expect(ChatModelLoadPresentation.make(elapsed: .seconds(19), estimate: estimate).fraction == 0.9)
+        #expect(ChatModelLoadPresentation.make(elapsed: .seconds(300), estimate: estimate).fraction == 0.9)
+        #expect(ChatModelLoadPresentation.make(elapsed: .seconds(-1), estimate: estimate).fraction == 0, "a clock step back reads as the start")
+    }
+
+    @Test("past the estimate the text says so plainly, and VoiceOver's text changes once, without seconds")
+    func loadLongerThanLastTime() {
+        let estimate = Duration.seconds(20)
+        let onTime = ChatModelLoadPresentation.make(elapsed: .seconds(20), estimate: estimate)
+        #expect(onTime.text == "Loading the AI model… 20 s")
+        #expect(onTime.accessibilityText == "Loading the AI model")
+
+        let late = ChatModelLoadPresentation.make(elapsed: .seconds(52), estimate: estimate)
+        #expect(late.text == "Loading the AI model… 52 s, longer than last time")
+        #expect(late.accessibilityText == "Loading the AI model, longer than last time")
+        #expect(ChatModelLoadPresentation.make(elapsed: .seconds(53), estimate: estimate).accessibilityText == late.accessibilityText)
     }
 
     @Test("a finished answer is announced once, whole")

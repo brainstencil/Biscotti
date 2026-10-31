@@ -2,8 +2,8 @@ import Foundation
 import Intelligence
 
 /// How chat shares this Mac with a recording: whether a question asked during
-/// a recording waits for it to stop, and whether the AI model stays loaded
-/// after an answer.
+/// a recording waits for it to stop, whether the AI model stays loaded after
+/// an answer, and when chat may load it before a question is sent.
 public struct ChatResourcePolicy: Sendable, Equatable {
     public enum Mode: Sendable, Equatable {
         /// Answers run beside the recording and the live transcript.
@@ -30,7 +30,8 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     /// During a recording, Macs with less memory than this close the model
     /// after each answer, to free its memory for the rest of the meeting.
     public var closeAfterAnswerBelowMemory: UInt64
-    /// How long the model stays loaded after an answer otherwise.
+    /// How long the model stays loaded after an answer otherwise, unless
+    /// "Keep the AI model ready" keeps it loaded (`keepsModelLoaded`).
     public var idleKeepAlive: Duration
 
     public init(
@@ -64,5 +65,21 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     /// Whether the model is closed after each answer.
     func closesAfterAnswer(isRecording: Bool) -> Bool {
         isRecording && physicalMemory < closeAfterAnswerBelowMemory
+    }
+
+    /// Whether chat may load the model before a question is sent: when the
+    /// question field takes focus, or for "Keep the AI model ready". Not
+    /// during a recording on a Mac whose questions wait for Stop, or whose
+    /// model closes after each answer, since the load would be closed at once.
+    public func loadsAhead(isRecording: Bool) -> Bool {
+        !isRecording || (mode() == .concurrent && !closesAfterAnswer(isRecording: true))
+    }
+
+    /// Whether the model stays loaded with no idle close: "Keep the AI model
+    /// ready" is on and the memory rule lets it stay. During a recording on a
+    /// Mac under `closeAfterAnswerBelowMemory` the rule wins, and the model
+    /// closes after each answer as it does with the setting off.
+    public func keepsModelLoaded(keepModelReady: Bool, isRecording: Bool) -> Bool {
+        keepModelReady && loadsAhead(isRecording: isRecording)
     }
 }

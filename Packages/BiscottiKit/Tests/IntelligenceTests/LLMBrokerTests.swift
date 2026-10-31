@@ -187,6 +187,107 @@ struct LLMBrokerTests {
         #expect(opener.openCount == 2)
     }
 
+    // MARK: Keeping the model loaded
+
+    @Test("kept loaded, a keep-open lease leaves no idle close; a close lease still closes")
+    func keepsModelLoadedSkipsIdleClose() async throws {
+        let broker = makeBroker(defaultKeepAlive: .keepOpen(.seconds(180)))
+        await broker.setKeepsModelLoaded(true)
+        try await lease(broker)
+
+        clock.advance(by: .seconds(3600))
+        try await settle()
+        #expect(opener.closeCount == 0)
+        #expect(clock.pendingSleepCount == 0, "no idle close is scheduled")
+
+        try await lease(broker, keepAlive: .close)
+        #expect(opener.closeCount == 1, "the memory rule's .close wins")
+    }
+
+    @Test("turning keep-loaded on cancels a pending idle close; turning it off starts one from now")
+    func keepsModelLoadedToggles() async throws {
+        let broker = makeBroker(defaultKeepAlive: .keepOpen(.seconds(180)))
+        try await lease(broker, keepAlive: .keepOpen(.seconds(60)))
+        clock.advance(by: .seconds(30))
+        await broker.setKeepsModelLoaded(true)
+        clock.advance(by: .seconds(60))
+        try await settle()
+        #expect(opener.closeCount == 0)
+
+        await broker.setKeepsModelLoaded(false)
+        clock.advance(by: .seconds(59))
+        try await settle()
+        #expect(opener.closeCount == 0, "the last lease's keep-alive, from the moment it was turned off")
+        clock.advance(by: .seconds(1))
+        try await waitUntil("the idle close") { opener.closeCount == 1 }
+    }
+
+    @Test("closeWhenIdle closes a model kept loaded")
+    func closeWhenIdleClosesKeptModel() async throws {
+        let broker = makeBroker()
+        await broker.setKeepsModelLoaded(true)
+        try await lease(broker)
+
+        await broker.closeWhenIdle()
+
+        #expect(opener.closeCount == 1)
+    }
+
+    // MARK: Loading ahead
+
+    @Test("loading ahead opens the model in a lease of its own, then applies its keep-alive")
+    func loadAheadOpensAndIdleCloses() async throws {
+        let broker = makeBroker()
+        let waits = Recorder<LLMWait>()
+
+        let loaded = try await broker.loadAhead(
+            model: modelA, priority: .interactive, purpose: "ahead",
+            keepAlive: .keepOpen(.seconds(30)), onWait: { waits.append($0) }
+        )
+
+        #expect(loaded)
+        #expect(waits.all == [.loadingModel])
+        #expect(opener.openCount == 1)
+        try await lease(broker)
+        #expect(opener.openCount == 1, "the next lease finds the model loaded")
+        try await lease(broker, keepAlive: .keepOpen(.seconds(30)))
+        clock.advance(by: .seconds(30))
+        try await waitUntil("the idle close") { opener.closeCount == 1 }
+    }
+
+    @Test("loading ahead does nothing when the model is loaded or a lease runs")
+    func loadAheadSkipsWhenLoadedOrBusy() async throws {
+        let broker = makeBroker()
+        try await lease(broker)
+        #expect(try await broker.loadAhead(model: modelA, priority: .interactive, purpose: "ahead") == false)
+
+        let running = request(broker, purpose: "summary", model: modelB, log: log)
+        try await waitUntil("the running lease") { running.entered.isOpen }
+        #expect(try await broker.loadAhead(model: modelA, priority: .interactive, purpose: "ahead") == false)
+        running.release.open()
+        try await running.task.value
+
+        #expect(opener.requests.map(\.model) == [modelA, modelB])
+    }
+
+    @Test("a request made while the model loads ahead waits for it and reuses the model")
+    func requestWaitsForLoadAhead() async throws {
+        let broker = makeBroker()
+        let gate = Latch()
+        opener.openGate = gate
+        let ahead = Task { try await broker.loadAhead(model: modelA, priority: .interactive, purpose: "ahead") }
+        try await waitUntil("the load to start") { await broker.runningPurpose == "ahead" }
+
+        let chat = request(broker, purpose: "chat", priority: .interactive, holds: false, log: log)
+        try await waitUntil("the request to queue") { chat.isQueued }
+        #expect(chat.waits.all == [.queued(behind: "ahead")])
+        gate.open()
+
+        #expect(try await ahead.value)
+        try await chat.task.value
+        #expect(opener.openCount == 1)
+    }
+
     // MARK: Ordering
 
     @Test("a waiting interactive request runs before a background one that queued first")

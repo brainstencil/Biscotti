@@ -66,11 +66,22 @@ struct ChatHistoryPresentation: Equatable {
 - **Chip preview.** While the pointer rests on a target, it waits `ChatChipPreviewPresentation.restDelay` (1 s, about the system tooltip delay) and asks `MeetingChatService.citedLine(at:meetingID:)` for the line, looked up during the wait. The target publishes the line and its bounds' anchor through `ChatChipPreviewKey`; `ChatMessageList` draws the bubble in an overlay over the scroll view (`chatChipPreview()`), so later rows do not cover it and the scroll view does not clip it. `ChatChipPreviewPresentation` gives its heading ("Alex · 10:32", or the time alone), its text (with a live line's tail) and its place: below the chip, above it when there is no room below, inside the list's edges. Leaving the chip, or clicking it, removes it. It is hidden from accessibility and takes no clicks.
 - Streaming dots (`TypingDots`) follow the last block while the state is `.streaming`.
 
+**Before the first word** (Backlog B10, 30 October 2026). `ChatAnswerPresentation.slot(for:)` gives what an answer shows, as a `ChatAnswerSlot`:
+- `.loadingModel` (status `.loadingModel`): `ChatModelLoadLine`, the text "Loading the AI model… 12 s" (13 pt, `inkSecondaryLegible`, monospaced digits) over a small linear `ProgressView`, at most 240 pt wide. `ChatModelLoadPresentation.make(elapsed:estimate:)` gives its text, fraction and VoiceOver text from `MeetingChatService.modelLoad`, redrawn every 0.25 s by a `TimelineView`. With an estimate (the model's last load on this Mac), the bar fills by `elapsed / estimate`, capped at 0.9 (`maximumFraction`), so it never shows a load as done before it is; past the estimate the text reads "Loading the AI model… 52 s, longer than last time". With no estimate, the bar is indeterminate and the text still counts the seconds. VoiceOver reads "Loading the AI model" (and ", longer than last time" once past the estimate), with no seconds, and hears it once at the start and once when it runs late.
+- `.status(text)` (waiting for the summary, or for Stop): `ChatStatusLine`, the spinner and the text, as before.
+- `.firstWord` (status `.thinking`, no text yet): the typing dots alone, at once after Send or after the load ends, labelled "Thinking" for VoiceOver and announced once. They replace the "Thinking…" spinner line.
+- `.text(isStreaming:)`: the blocks, with the dots ("Writing") under them while the answer streams. Every ending (complete, stopped, interrupted, failed) is `.text(isStreaming: false)`, so the dots always end with the answer; its footer says how it ended.
+- A complete answer with no text (a stream that ended with no words) would leave a blank slot: its footer reads "The AI gave no answer" with Retry, and that is what VoiceOver announces.
+
+No skeleton is drawn for either wait. The Interface Lineage review (`demo/meeting-chat/interface-lineage-audit.md` §7, §8, §11) found it fits neither: the answer has no known layout, it looks the same at 3 s and at 30 s, and NN/g limits skeletons to waits under 10 s.
+
 **Hover.** One state for every chat button (`ChatHover`): the `neutralChip` wash in the button's shape while hovered or pressed, if enabled. Icon buttons use `ChatHoverButtonStyle` (`HoverHighlight`): History, Copy, and `ChatHeaderIconButton` (New chat, close; 26 × 26 pt). The bordered buttons (`ChatInlineButtonStyle`: Retry, Open Settings, Turn On) and the jump-to-newest circle (`ChatCircleButtonStyle`) draw the wash over their `cardFill`. `ChatRoundButton` keeps Send's and Stop's fill and draws it at `ChatHover.filledOpacity` (85%) under the pointer; disabled Send does not change. `TranscriptUI`'s drawer header is live-transcript code and keeps `.plain` buttons; B9 fixes it there.
 
 **Footer row.** A 14 pt copy icon button (`doc.on.doc`, `inkTertiary`, `HoverHighlight`). It copies the answer's plain text (Markdown markers removed, chips as their time) and shows "Copied" for 1.5 s. Then the footer text, 11.5 pt `inkSecondary`. "Stopped" shows for a stopped answer; a failed answer shows its error in `signalRedText` and a "Retry" button; `isUnsaved` adds "Couldn't save this answer".
 
-**Status line.** `ProgressView().controlSize(.small)` and the status text: "Loading the AI model…", "Waiting for the summary to finish…", "Answers when the recording stops", "Thinking…".
+**Status line.** `ProgressView().controlSize(.small)` and the status text: "Waiting for the summary to finish…" or "Answers when the recording stops". The model load has its bar and the first word its dots (above).
+
+**Load on focus.** The text field's `.onChange(of: focus.wrappedValue, initial: true)` calls `MeetingChatService.questionFieldDidTakeFocus(meetingID:)` when the field takes the cursor, so the model loads while the question is typed.
 
 **Keys.** The field is a `TextField(axis: .vertical)` with `lineLimit(1...5)`.
 - Return without Shift sends (`.onKeyPress(.return)` returns `.handled` unless Shift is held).
@@ -136,6 +147,10 @@ struct ChatHistoryPresentation: Equatable {
 - `characterCountAppearsAt1800`.
 - `historyItemsNewestFirst`: titles, open-thread checkmark, "5:21 PM" today and "Oct 26" earlier.
 - `copyTextStripsMarkdown`: "**A base** it lives in [0:34]" copies as "A base it lives in 0:34".
+- `slotsBeforeTheFirstWord`: `.loadingModel` gives the bar, the summary and Stop waits their status lines, `.thinking` the dots.
+- `dotsEndWithTheAnswer`: words while streaming show the dots under them; every ending, with or without text, shows none.
+- `noAnswerFooter`: a complete answer with no text says "The AI gave no answer", with Retry, and announces it.
+- `loadWithoutEstimate`, `loadFillsAgainstEstimate`, `loadLongerThanLastTime`: no estimate gives an indeterminate bar with the seconds; the bar fills against the estimate and stays at 0.9 past it; past the estimate the text says "longer than last time", and the VoiceOver text changes once, without seconds.
 - `chipLabelsReadAsWritten`: every chip in reading order, a repeated time twice, each labelled "Go to … in the transcript" by its own text; `chipSegments`: the text holds no links.
 - `ChatChipTargetTests`: a real text layout (rendered with `ImageRenderer`) gives each chip one rectangle, in reading order on one line and on a later line when the text wraps; the preview's heading and text for a saved, a live and an unnamed line; its placement below, above, and on the roomier side, kept inside the list.
 

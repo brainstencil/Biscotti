@@ -106,6 +106,12 @@ public struct ChatQuestionField: View {
         .foregroundStyle(.ink)
         .lineLimit(1 ... 5)
         .focused(focus)
+        // The model loads while the question is typed (`questionFieldDidTakeFocus`).
+        .onChange(of: focus.wrappedValue, initial: true) { _, isFocused in
+            if isFocused {
+                service.questionFieldDidTakeFocus(meetingID: state.meetingID)
+            }
+        }
         .padding(.vertical, 11)
         .overlay { continueChatTarget }
         .onKeyPress(.return, phases: .down) { press in

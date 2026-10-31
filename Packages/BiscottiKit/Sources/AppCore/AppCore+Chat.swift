@@ -3,6 +3,7 @@ import Foundation
 import Intelligence
 import LiveTranscriptionService
 import MeetingChat
+import Observation
 import os
 import Recording
 import TranscriptionService
@@ -38,6 +39,24 @@ public extension MeetingChatService {
     }
 }
 
+public extension AppCore {
+    /// Chat's "Keep the AI model ready" setting, for Settings.
+    var keepsChatModelReady: Bool {
+        chat.keepsModelReady
+    }
+
+    /// Turns "Keep the AI model ready" on or off (`MeetingChatService.setKeepsModelReady(_:)`).
+    func setKeepsChatModelReady(_ isOn: Bool) async {
+        await chat.setKeepsModelReady(isOn)
+    }
+
+    /// Whether this Mac closes the chat model after each answer during a
+    /// recording, which "Keep the AI model ready" does not change.
+    var closesChatModelDuringRecordings: Bool {
+        chat.closesModelDuringRecordings
+    }
+}
+
 extension JobStatus {
     /// Queued or running: the transcript is on its way.
     var isInProgress: Bool {
@@ -62,6 +81,38 @@ extension AppCore {
         // "no transcript" in between.
         transcription.onTranscriptSaved = { [weak self] meetingID, segmentTexts in
             self?.chat.transcriptWasSaved(meetingID: meetingID, hasText: MeetingChatService.hasTranscriptText(segmentTexts))
+        }
+    }
+
+    /// "Keep the AI model ready" after launch: once the launch work that
+    /// needs the GPU, the speech models' preparation, has ended, chat loads
+    /// the AI model if the setting is on. From then on, chat hears of every
+    /// change of the active model, so the model it keeps loaded is the one
+    /// selected.
+    func startChatModelReadiness() {
+        if chat.keepsModelReady {
+            Task { [weak self] in
+                await self?.waitWhilePreparingSpeechModels()
+                await self?.chat.launchWorkDidEnd()
+            }
+        }
+        let modelManager = modelManager
+        let chat = chat
+        Task {
+            var current = modelManager.activeModelURL()
+            while !Task.isCancelled {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    withObservationTracking {
+                        _ = modelManager.activeModelURL()
+                    } onChange: {
+                        continuation.resume()
+                    }
+                }
+                let next = modelManager.activeModelURL()
+                guard next != current else { continue }
+                current = next
+                await chat.activeModelDidChange()
+            }
         }
     }
 

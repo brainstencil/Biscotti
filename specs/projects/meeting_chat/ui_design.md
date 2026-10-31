@@ -53,10 +53,17 @@ The transcript drawer's card style: `cardFill`, 0.5 pt `cardStroke` border, `dra
   - **Chip preview:** when the pointer rests on a chip for about the system tooltip delay (1 s), the cited transcript line shows next to it, 6 pt below the chip, or 6 pt above it when the list has no room below: a `cardFill` bubble with a 0.5 pt `cardStroke` border, `chipRadius` and a soft shadow, at most 320 pt wide and kept 12 pt inside the list's edges. Its first line is the speaker and the line's start time, "Alex · 10:32", in 11.5 pt medium `inkSecondaryLegible` (the time alone when the line names no speaker); under it, up to three lines of the line's text in 13 pt `ink`. It is the line a click goes to, in the transcript a click shows. It goes away when the pointer leaves the chip, or with a click, and does not take clicks itself. VoiceOver does not see it; the chip's label names its target.
   - **Under a finished answer**, 8 pt below, a left-aligned row: a 14 pt copy icon in `inkTertiary`, then 11.5 pt `inkSecondary` text: "Based on the transcript through 0:46" during a recording, "Based on the draft transcript" for a draft, nothing otherwise. Copying shows "Copied" briefly in place of the icon.
   - **Turns** are 26 pt apart.
-  - **Before the first word**, a status line in `inkSecondaryLegible` with a small spinner: "Loading the AI model…", "Waiting for the summary to finish…", "Answers when the recording stops" (no Mac waits for Stop by default, per Backlog decision B4; the wait-for-Stop mode remains, reachable only from tests and the chat load driver) or "Thinking…".
-  - **While an answer streams**, three 4 pt `inkTertiary` dots sit on their own line under its text. The list follows the newest text unless the user scrolls up, in which case a round down-arrow button appears at the bottom center; it jumps back to the newest text.
+  - **Before the first word** (Backlog B10, 30 October 2026), the answer's place shows what it waits for:
+    - **The model loading:** "Loading the AI model… 12 s", 13 pt `inkSecondaryLegible` with monospaced digits, over a small linear progress bar, at most 240 pt wide, 8 pt below it. The bar fills against the model's last load time on this Mac and stops at 90% until the load ends. Past that time the text reads "Loading the AI model… 52 s, longer than last time". With no earlier load, the bar is indeterminate. No spinner.
+    - **Other waits:** a status line in `inkSecondaryLegible` with a small spinner: "Waiting for the summary to finish…" or "Answers when the recording stops" (no Mac waits for Stop by default, per Backlog decision B4; the wait-for-Stop mode remains, reachable only from tests and the chat load driver).
+    - **The model reading the meeting:** the three typing dots alone, at once after Send or after the load ends, until the first word. They replace the "Thinking…" line. No skeleton is drawn for any wait.
+  - **While an answer streams**, three 4 pt `inkTertiary` dots sit on their own line under its text. They end with the answer, however it ends. An answer that ended with no words shows "The AI gave no answer" in its footer row, with Retry. The list follows the newest text unless the user scrolls up, in which case a round down-arrow button appears at the bottom center; it jumps back to the newest text.
   - **A stopped answer** keeps its text, and its row reads "Stopped".
   - **A failed answer** shows the error in a short sentence, in `signalRedText`, with a "Retry" button.
+
+### Settings → AI Enhancements
+
+"Keep the AI Model Ready" is a toggle under "AI Language Model", off by default and disabled with no model downloaded, with a footnote in the section's metadata style: "Loads the AI model at launch and keeps it loaded, so chat answers sooner. Uses about 7 GB of memory while Biscotti is open." The size is the selected model's file size, in whole GB. On Macs with less than 24 GB the footnote adds "During recordings, it still closes after each answer to free memory."
 
 ## Recording screen
 
@@ -82,7 +89,7 @@ The transcript drawer's card style: `cardFill`, 0.5 pt `cardStroke` border, `dra
   - Field: "Ask about this meeting". Send: "Send question". Stop: "Stop answer".
   - History button: "Chat history, [thread name]". "New chat". Close: "Close chat".
   - Time chips: "Go to 0:42 in the transcript", read as a link after the paragraph that holds them, in reading order. A range chip reads as written: "Go to 12:34–13:10 in the transcript". Copy: "Copy answer".
-- **Announcements:** an answer is announced once it finishes, not word by word. Status lines are announced when they change.
+- **Announcements:** an answer is announced once it finishes, not word by word. Status lines are announced when they change. The model load is read and announced as "Loading the AI model", without its seconds, once when it starts and once if it runs past the last load time ("…, longer than last time"). The dots before the first word read "Thinking" and are announced once; the dots under streaming text read "Writing".
 - **Keyboard:** everything works from the keyboard. With macOS keyboard navigation on, Tab goes History, New chat, Close chat, then, answer by answer, the answer's chips in reading order and its Copy, then the field and Send. Space (or Return) on a chip does what a click does.
 - **Dark mode:** every colour above is a dynamic token with a dark value; the card, bubbles and chips follow the transcript drawer's dark look.
 - **Reduce Motion:** the card appears without sliding.

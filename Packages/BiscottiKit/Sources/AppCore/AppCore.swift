@@ -512,6 +512,7 @@ public final class AppCore {
         logger.info("onLaunch: reloadSummaries starting")
         await reloadSummaries()
         await prepareModelsInBackground()
+        startChatModelReadiness()
         logger.info("onLaunch: done")
     }
 
@@ -768,6 +769,7 @@ public extension AppCore {
         await startBackgroundServices()
         await reloadSummaries()
         await prepareModelsInBackground()
+        startChatModelReadiness()
     }
 }
 

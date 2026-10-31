@@ -74,6 +74,21 @@ public actor LLMBroker {
     /// The purpose of the running lease, or nil when idle. For status text.
     public var runningPurpose: String? { get }
 
+    /// Loads `model` before anyone needs it, as a lease of its own with an empty body
+    /// (it reports `.loadingModel`, requests made meanwhile wait for it, and `keepAlive`
+    /// applies when it ends). Returns false without loading while a lease runs or waits,
+    /// or when `model` is already loaded.
+    public func loadAhead(
+        model: URL, priority: LLMPriority, purpose: String,
+        keepAlive: LLMKeepAlive? = nil,
+        onWait: @escaping @Sendable (LLMWait) -> Void = { _ in }
+    ) async throws -> Bool
+
+    /// While true, a lease that ends with `.keepOpen` leaves the connection open with no
+    /// idle close; `.close` leases and `closeWhenIdle()` still close it. Turning it off
+    /// starts the idle close of the lease that ended last, from now.
+    public func setKeepsModelLoaded(_ keeps: Bool)
+
     /// Closes the connection now, after the running lease if there is one.
     public func closeWhenIdle() async
 }
@@ -112,7 +127,9 @@ public struct LiveLLMConnectionOpener: LLMConnectionOpening {
 
 **Keep-alive** is the lease's own value, or `defaultKeepAlive`. A later lease cancels a pending idle close. A model change in Settings is caught at the next lease by the URL comparison.
 
-**Logging** (`Logger(subsystem: "net.scosman.biscotti", category: "llm-broker")`): lease start and end with purpose, priority and wait time; model opens with their duration; reconfigures with the size; idle closes; dropped connections with the error's type, never prompt text.
+**Keeping the model loaded and loading ahead** (added 30 October 2026, Backlog B10). Chat's "Keep the AI model ready" setting needs the model to stay loaded after every lease, the summary's included, so the hold is the broker's, not a lease's: `setKeepsModelLoaded(true)` skips the idle close that a `.keepOpen` lease would schedule, and cancels a pending one. The memory rule still wins, because chat turns the hold off during a recording on Macs under 24 GB, and a `.close` lease or `closeWhenIdle()` closes the connection whatever the hold. Turning the hold off applies the last lease's keep-alive from that moment. `loadAhead` is how chat loads the model before a question: it checks that nothing runs or waits and that the model is not loaded, then takes a lease with an empty body. `withLease` takes the lease before its first suspension, so no request can start between the check and the load.
+
+**Logging** (`Logger(subsystem: "net.scosman.biscotti", category: "llm-broker")`): lease start and end with purpose, priority and wait time; model opens with their duration and the purpose of the lease that loaded it ("Model opened: … in 31234 ms, for chat"), one line per load; the keep-loaded hold when it changes; reconfigures with the size; idle closes; dropped connections with the error's type, never prompt text.
 
 ## Changes outside the broker
 
@@ -142,5 +159,11 @@ Fakes in `BiscottiTestSupport`: `ScriptedLLMOpener` (counts opens and closes, ca
 - `bodyErrorDropsConnection`: a body that throws a non-cancellation error closes the connection; the next lease reopens.
 - `cancelledGenerationKeepsConnection`: a body that throws `LLMServiceError.cancelled` keeps the connection open.
 - `sameContextSizeSkipsReconfigure`: two leases that reconfigure to the same size call the session's `reconfigure` once.
+- `keepsModelLoadedSkipsIdleClose`: with the hold on, a `.keepOpen` lease schedules no idle close, and a `.close` lease still closes.
+- `keepsModelLoadedToggles`: turning the hold on cancels a pending idle close; turning it off starts the last lease's idle close from then.
+- `closeWhenIdleClosesKeptModel`: `closeWhenIdle()` closes a model the hold keeps.
+- `loadAheadOpensAndIdleCloses`: `loadAhead` reports `.loadingModel`, opens once, and the next lease reuses the model.
+- `loadAheadSkipsWhenLoadedOrBusy`: it returns false with the model loaded or a lease running.
+- `requestWaitsForLoadAhead`: a request made during the load waits behind it and opens nothing more.
 - `brokeredRunnerIsBackground`: `BrokeredLLMRunner.withSession` runs as a background lease with purpose "summary".
 - `intelligenceThroughBroker` (in `IntelligenceTests`): an analysis run through `BrokeredLLMRunner` produces the same stored summary as through the old fake runner.

@@ -4,8 +4,9 @@ import MeetingChat
 import SwiftUI
 import TranscriptUI
 
-/// One answer: the status line before its first word, then its blocks (with
-/// typing dots while it streams), then, once it ends, the footer row.
+/// One answer: before its first word, what it waits for (the model load's
+/// bar, a status line, or typing dots while the model reads); then its
+/// blocks, with typing dots while it streams; then, once it ends, the footer row.
 struct ChatAnswerView: View {
     let message: ChatMessageView
     let state: MeetingChatState
@@ -14,16 +15,19 @@ struct ChatAnswerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.spacingSM) {
-            if let status = ChatAnswerPresentation.statusText(for: message) {
-                ChatStatusLine(text: status)
-            } else {
+            switch ChatAnswerPresentation.slot(for: message) {
+            case .loadingModel:
+                ChatModelLoadLine(load: service.modelLoad)
+            case let .status(text):
+                ChatStatusLine(text: text)
+            case .firstWord:
+                ChatTypingDots(label: ChatAnswerPresentation.firstWordLabel, announces: true)
+            case let .text(isStreaming):
                 if !message.blocks.isEmpty {
                     ChatAnswerBlocks(blocks: message.blocks, chipActions: chipActions)
                 }
-                if case .streaming = message.state {
-                    TypingDots()
-                        .padding(.vertical, Tokens.spacingXS)
-                        .accessibilityLabel("Writing")
+                if isStreaming {
+                    ChatTypingDots(label: ChatAnswerPresentation.writingLabel, announces: false)
                 }
             }
             if let footer = ChatAnswerFooterPresentation.make(message) {
@@ -49,6 +53,65 @@ struct ChatAnswerView: View {
 }
 
 // MARK: - Status
+
+/// The transcript's typing dots in the answer's slot, named for VoiceOver.
+/// Before the first word they are announced once, as the status line was.
+struct ChatTypingDots: View {
+    let label: String
+    let announces: Bool
+
+    var body: some View {
+        TypingDots()
+            .padding(.vertical, Tokens.spacingXS)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .task {
+                if announces {
+                    AccessibilityNotification.Announcement(label).post()
+                }
+            }
+    }
+}
+
+/// "Loading the AI model…" with the seconds so far, over a bar that fills
+/// against the model's last load on this Mac (`ChatModelLoadPresentation`).
+/// VoiceOver reads it without the seconds, and hears it once when it starts
+/// and once if the load runs past the estimate.
+struct ChatModelLoadLine: View {
+    static let barWidth: CGFloat = 240
+
+    let load: ChatModelLoad?
+
+    var body: some View {
+        TimelineView(.periodic(from: load?.startedAt ?? .now, by: 0.25)) { context in
+            let presentation = ChatModelLoadPresentation.make(
+                elapsed: load.map { .milliseconds(Int64(context.date.timeIntervalSince($0.startedAt) * 1000)) },
+                estimate: load?.estimate
+            )
+            VStack(alignment: .leading, spacing: Tokens.spacingSM) {
+                Text(presentation.text)
+                    .font(.system(size: 13))
+                    .monospacedDigit()
+                    .foregroundStyle(.inkSecondaryLegible)
+                Group {
+                    if let fraction = presentation.fraction {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .frame(maxWidth: Self.barWidth)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(presentation.accessibilityText)
+            .task(id: presentation.accessibilityText) {
+                AccessibilityNotification.Announcement(presentation.accessibilityText).post()
+            }
+        }
+    }
+}
 
 /// A small spinner and what the answer waits for. Announced when it changes.
 struct ChatStatusLine: View {

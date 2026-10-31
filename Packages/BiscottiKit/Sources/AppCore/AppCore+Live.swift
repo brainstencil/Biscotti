@@ -352,30 +352,12 @@ private struct LiveTranscriberAdapter: Transcribing {
             poll: Duration = .milliseconds(500),
             clock: any Clock<Duration> = ContinuousClock()
         ) async -> Duration {
-            let waited = await waitWhilePreparing(settle: settle, poll: poll, on: clock)
+            let waited = await waitWhilePreparingSpeechModels(settle: settle, poll: poll, on: clock)
             if !Task.isCancelled {
                 let seconds = Double(waited.components.seconds) + Double(waited.components.attoseconds) / 1e18
                 chatLoadLogger.info("launch-wait-done seconds=\(String(format: "%.1f", seconds), privacy: .public)")
             }
             return waited
-        }
-
-        private func waitWhilePreparing<C: Clock<Duration>>(settle: Duration, poll: Duration, on clock: C) async -> Duration {
-            let start = clock.now
-            // The first of the latest checks in a row that found no preparation.
-            var idleSince: C.Instant?
-            while !Task.isCancelled {
-                let now = clock.now
-                if transcription.isPreparingModels {
-                    idleSince = nil
-                } else {
-                    let since = idleSince ?? now
-                    if since.duration(to: now) >= settle { break }
-                    idleSince = since
-                }
-                try? await clock.sleep(for: poll)
-            }
-            return start.duration(to: clock.now)
         }
     }
 

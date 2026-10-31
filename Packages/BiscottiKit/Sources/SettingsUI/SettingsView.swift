@@ -298,6 +298,8 @@ private extension SettingsView {
             summaryPromptRow
 
             aiLanguageModelRow
+
+            keepModelReadyRow
         } header: {
             HStack {
                 Text(Self.sectionTitles[3])
@@ -388,6 +390,26 @@ private extension SettingsView {
                 .controlSize(.small)
             }
         }
+    }
+
+    var keepModelReadyRow: some View {
+        VStack(alignment: .leading, spacing: Tokens.spacingXS) {
+            Toggle("Keep the AI Model Ready", isOn: keepModelReadyBinding)
+                .disabled(!viewModel.modelAvailable)
+            Text(viewModel.keepModelReadyFootnote)
+                .font(Tokens.metadataFont)
+                .foregroundStyle(Tokens.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    var keepModelReadyBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.modelAvailable && viewModel.keepModelReady },
+            set: { newValue in
+                Task { await viewModel.setKeepModelReady(newValue) }
+            }
+        )
     }
 
     var aiAnalysisEnabledBinding: Binding<Bool> {

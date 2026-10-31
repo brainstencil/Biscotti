@@ -69,13 +69,13 @@ Two new targets in `Packages/BiscottiKit/Package.swift`, each with a `.library` 
    It also takes the notes, title, date and invitees, and the thread's earlier turns.
 3. `ChatContextBuilder.messages(for:)` returns the messages, the context size to use, and the evidence index used later to check cited times. This is pure and fast.
 4. During a recording, the resource policy decides whether the answer runs now, beside the live text, or waits for Stop. No Mac waits for Stop by default (Backlog decision B4); the wait-for-Stop mode remains, reachable only from tests and the chat load driver.
-5. It requests a lease from `LLMBroker` at `.interactive` priority. While waiting, the status line says why ("Loading the AI model…", "Waiting for the summary to finish…").
+5. It requests a lease from `LLMBroker` at `.interactive` priority. While waiting, the answer's place says why: the model load's estimated bar ("Loading the AI model… 12 s"), or "Waiting for the summary to finish…". The load may already be running: chat loads the model when the question field takes the cursor, and "Keep the AI model ready" keeps it loaded (Backlog B10, [meeting_chat_service](components/meeting_chat_service.md)). Typing dots show from the lease's start to the first word.
 6. In the lease, it calls `reconfigure(contextSize:)` only if the size changed, then `generateStreaming`. Tokens are appended to the in-memory answer; the UI observes it and redraws at most every 50 ms.
 7. The stream ends:
    - `.done`: the answer is saved as complete, with the transcript cutoff and kind.
    - The user pressed Stop: the answer is saved as stopped.
    - An error, or an end without `.done`: the answer is saved as failed, with a short message.
-8. The lease is returned. The broker keeps the connection open for its idle period, or closes it at once if the policy says so.
+8. The lease is returned. The broker keeps the connection open for its idle period, or closes it at once if the policy says so. With "Keep the AI model ready" on, it keeps it open with no idle period, except during a recording on Macs under 24 GB.
 
 ## Cross-cutting decisions
 

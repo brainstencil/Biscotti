@@ -10,7 +10,7 @@ status: complete
 
 Not its job: drawing (the UI observes it), prompt text and parsing ([chat_context](chat_context.md)), model access ([llm_broker](llm_broker.md)), or storage details ([chat_store](chat_store.md)).
 
-Module `MeetingChat`, files `MeetingChatService.swift`, `MeetingChatState.swift`, `ChatResourcePolicy.swift` and `ChatErrorText.swift`.
+Module `MeetingChat`, files `MeetingChatService.swift`, `MeetingChatService+ModelLoad.swift`, `MeetingChatState.swift`, `ChatModelLoad.swift`, `ChatResourcePolicy.swift` and `ChatErrorText.swift`.
 
 ## Public Interface
 
@@ -25,11 +25,17 @@ public enum ChatAvailability: Equatable, Sendable {
 }
 
 public enum ChatAnswerStatus: Equatable, Sendable {
-    case loadingModel               // "Loading the AI model…"
+    case loadingModel               // "Loading the AI model… 12 s" over the estimated bar
     case waitingForSummary          // "Waiting for the summary to finish…"
     case waitingForRecordingToEnd   // "Answers when the recording stops"
-    case thinking                   // "Thinking…"
+    case thinking                   // typing dots, until the first word (B10; was "Thinking…")
     case streaming
+}
+
+/// A model load chat waits for: the loading bar's start and estimate.
+public struct ChatModelLoad: Equatable, Sendable {
+    public let startedAt: Date
+    public let estimate: Duration?   // the model's last measured load on this Mac; nil before the first
 }
 
 public struct ChatMessageView: Identifiable, Equatable, Sendable {
@@ -133,6 +139,32 @@ Computed per meeting, in this order (the first match wins):
 
 Phase 10 added: a pass that saves a transcript reports it through `TranscriptionService.onTranscriptSaved(meetingID, segmentTexts)`, and AppCore calls `transcriptWasSaved(meetingID:hasText:)` with `hasTranscriptText(_:)`, the evidence's rule for "has text" (`ChatEvidence.hasText`). A save replaces the preferred transcript, so it sets the flag either way: a save with no text turns chat off for the meeting ("This meeting has no transcript to ask about"), and a later save with text turns it on. Once a save has set a meeting's flag, readings (`load`, the store) leave it: only a pass sets the preferred transcript, so that flag is always current, and a reading taken before the pass saved, with text or without, would be stale. Without a save, a transcript once read stays. Deleting the meeting (`meetingWasDeleted(_:)`) clears its flag and its save record.
 
+### Keeping the model ready and loading ahead
+
+Added 30 October 2026 (Backlog B10), after the user waited 30–60 s for "Loading the AI model…" on a first question. Two waits come before a first word: the model load, then the model reading the prompt. Each gets its own display (the estimated bar, then the dots), and the load can start before Send.
+
+```swift
+public extension MeetingChatService {
+    var keepsModelReady: Bool { get }              // "Keep the AI model ready", off by default
+    var modelLoad: ChatModelLoad? { get }          // the load an answer, or a load ahead, waits for
+    var closesModelDuringRecordings: Bool { get }  // the memory rule, for the Settings footnote
+    static let loadAheadPurpose = "chat-load-ahead"
+
+    func setKeepsModelReady(_ isOn: Bool) async
+    func launchWorkDidEnd() async                  // AppCore, after the speech models' preparation
+    func activeModelDidChange() async              // AppCore, when the active model changes
+    func questionFieldDidTakeFocus(meetingID: UUID)
+}
+```
+
+- **The setting** is kept in UserDefaults (`meetingChat.keepModelReady`, through the service's `defaults`), not in `DataStore`: it is chat's alone, like the restored threads and drafts. On, the broker holds the model (`setKeepsModelLoaded`) and the model loads ahead now. Off, the hold goes and the normal idle close starts from that moment. The hold is `policy.keepsModelLoaded(keepModelReady:isRecording:)`, applied at each change of the setting, at `recordingDidStart`, at `recordingDidStop` and at `launchWorkDidEnd`.
+- **The memory rule wins.** During a recording on a Mac under `closeAfterAnswerBelowMemory` (24 GB), the hold is off, `recordingDidStart` closes the idle model as before, and each answer closes it. `recordingDidStop` loads it again, in a task of its own, so the final pass after Stop never waits for the load.
+- **After launch:** with the setting on, AppCore waits until no speech model has been prepared for 3 s (`waitWhilePreparingSpeechModels`, the launch wait the chat load driver used, now in every build), so the AI model does not load beside the speech models' compile on the GPU, then calls `launchWorkDidEnd()`.
+- **Model changes:** AppCore observes the active model and calls `activeModelDidChange()`. With the setting on, a new model is loaded in place of the old one, and a deleted one is closed.
+- **Load on focus:** the question field calls `questionFieldDidTakeFocus(meetingID:)` when it takes the cursor. With chat available for that meeting, the service loads ahead (`loadModelAhead(reason:)`), unless a load ahead runs, an answer is being written or waits, or the policy says no: `loadsAhead(isRecording:)` is false during a recording on a Mac whose questions wait for Stop, or whose model closes after each answer, since the load would be closed at once. The broker skips it while any lease runs or waits, and when the model is loaded. The load ahead is a lease with purpose `chat-load-ahead` and the chat keep-alive, so with no question the model closes after 180 s, as after an answer.
+- **A question sent during a load ahead** waits behind it in the broker and shows `.loadingModel` (from `start(_:)`, or from `modelLoadDidStart` if the load is reported later), then `.thinking` when its lease starts on the loaded model.
+- **Timing loads.** Each chat lease's `onWait` (`waitReporter`) notes the moment the broker reports `.loadingModel`, on the service's clock, in a `ChatLoadTimer`, and sets `modelLoad` with the model's last load time as its estimate. The load ends at the lease body's start (an answer) or when `loadAhead` returns (a load ahead). A load that finished stores its duration in UserDefaults, per model file name (`meetingChat.modelLoadSeconds.<file>`), and logs it with the last one ("Model load took 31.2 s (question); last time 17.5 s"). A failed load stores nothing. The estimate comes from earlier loads, not from load progress: `LocalLLM` reports none, and this project leaves it unchanged. The summary's loads are not timed; the broker logs every load with its purpose.
+
 ### Asking
 
 `ask(meetingID:)`:
@@ -144,7 +176,7 @@ Phase 10 added: a pass that saves a transcript reports it through `Transcription
 1. **Evidence:** `record = await evidence(for: meetingID)`. Recording: `live.snapshot(includeTail: true)` → `.live`. Otherwise: `store.meetingDetail(id:)?.preferredTranscript` → `.saved`, else `live.draft(for:)` → `.draft`. Title, date, invitees (calendar attendees' display names) and notes from `meetingDetail`. If the evidence is gone, the answer fails with "There's no transcript to answer from yet."
 2. **Earlier turns:** the open thread's question and answer pairs before this question, complete or stopped answers only.
 3. **Policy** (recording only): `.waitForStop` → status `.waitingForRecordingToEnd`; the question is parked in `waitingForStop[meetingID]` and the task ends. `recordingDidStop` resumes it with draft evidence.
-4. **Lease:** `broker.withLease(model:priority: .interactive, purpose: "chat", keepAlive: policy.keepAlive(isRecording:), onWait:)`. `onWait` maps `.queued(behind: "summary")` → `.waitingForSummary` and `.loadingModel` → `.loadingModel`.
+4. **Lease:** `broker.withLease(model:priority: .interactive, purpose: "chat", keepAlive: policy.keepAlive(isRecording:), onWait:)`. `onWait` maps `.queued(behind: "summary")` → `.waitingForSummary` and `.loadingModel` → `.loadingModel`, and times the load (see [Keeping the model ready](#keeping-the-model-ready-and-loading-ahead)). The lease body's start sets `.thinking`: the dots show until the first token.
 5. Inside the lease:
    - `prompt = try await ChatPromptBuilder.build(..., count: session.countTokens)`.
    - `try await session.reconfigure(contextSize: prompt.contextSize)` (the broker skips it when unchanged).
@@ -183,16 +215,20 @@ public struct ChatResourcePolicy: Sendable, Equatable {
     public static func forThisMac() -> ChatResourcePolicy     // ProcessInfo.physicalMemory
     public func mode() -> Mode
     public func keepAlive(isRecording: Bool) -> LLMKeepAlive
+    public func loadsAhead(isRecording: Bool) -> Bool
+    public func keepsModelLoaded(keepModelReady: Bool, isRecording: Bool) -> Bool
 }
 ```
 
 - `mode()`: memory ≤ `waitForStopMaximumMemory` → `.waitForStop`; otherwise `.concurrent`. Outside a recording the mode is irrelevant. With the default of 0 every Mac, 8 GB Macs included, gets `.concurrent`: there is no wait for Stop. Only an explicit limit (the tests, or the chat load driver's `waitForStop` plan mode) gives `.waitForStop`.
-- `keepAlive(isRecording:)`: during a recording, on a Mac with less than `closeAfterAnswerBelowMemory`, `.close`, so the AI model's memory is free for the rest of the meeting. Otherwise `.keepOpen(idleKeepAlive)`.
+- `keepAlive(isRecording:)`: during a recording, on a Mac with less than `closeAfterAnswerBelowMemory`, `.close`, so the AI model's memory is free for the rest of the meeting. Otherwise `.keepOpen(idleKeepAlive)`: the model closes 180 s after the last lease, unless "Keep the AI model ready" holds it.
+- `loadsAhead(isRecording:)`: whether chat may load the model before a question (field focus, the setting). Always outside a recording; during one, only in `.concurrent` mode on a Mac that keeps the model after an answer.
+- `keepsModelLoaded(keepModelReady:isRecording:)`: the broker's hold, `keepModelReady && loadsAhead(isRecording:)`. So the setting keeps the model loaded outside recordings on every Mac, and during recordings only on Macs with 24 GB or more.
 - The live transcript is never paused for chat. Phase 7 built the [live hold](live_hold.md) and a third mode, `.holdLiveTranscript`, switched off on every Mac; Backlog decision B5 removed both. Answers run beside the live transcript on every Mac.
 
 ### Logging
 
-`Logger(subsystem: "net.scosman.biscotti", category: "meeting-chat")`: ask, policy mode, lease wait, prompt token count and context size, `isPartial`, outcome and duration. Never question or answer text.
+`Logger(subsystem: "net.scosman.biscotti", category: "meeting-chat")`: ask, policy mode, lease wait, prompt token count and context size, `isPartial`, outcome and duration, the setting's changes, a failed load ahead, and each timed model load with the last one. Never question or answer text.
 
 ## Dependencies
 
@@ -210,7 +246,7 @@ Asking:
 - `liveAnswerUsesSnapshot`: during a recording, the prompt holds the snapshot's rows and the basis is `.live(through:)`.
 - `draftAnswerUsesDraft`: after Stop and before the final pass, the basis is `.draft` and the footer says "Based on the draft transcript".
 - `flushThrottlesUpdates`: 200 tokens in 100 ms produce no more than about 3 view updates, and the final text is complete.
-- `statusShowsLoadingThenThinking`: a slow open reports `.loadingModel`, then `.thinking`, then `.streaming`.
+- `statusShowsLoadingThenThinking`: a slow open reports `.loadingModel`, then `.thinking` (the dots), then `.streaming`.
 - `waitsBehindSummary`: with a background lease running, the status is `.waitingForSummary` until it ends.
 - `stopSavesStopped`: Stop mid-stream saves the partial text as `.stopped`.
 - `endWithoutDoneFails`: a stream that ends without `.done` saves `.failed("The AI stopped before finishing.")`.
@@ -243,3 +279,16 @@ Policy:
 - `liveTranscriptNotPausedWhileAnswering`: during a recording, the fake live engine keeps receiving chunks while an answer streams.
 - `waitForStopParksQuestion`: in wait mode, the question waits with `.waitingForRecordingToEnd` and is answered from the draft after `recordingDidStop`.
 - `closeAfterAnswerWhileRecordingOnSmallMac`: during a recording, the lease's keep-alive is `.close` on 16 GB and `.keepOpen(180 s)` on 32 GB; outside a recording it is `.keepOpen(180 s)` on both.
+
+Keeping the model ready (`MeetingChatModelLoadTests`, with a defaults suite of its own):
+- `policyLoadsAhead`, `policyKeepsModelLoaded`: the two rules on 8, 16 and 32 GB, in and out of a recording, with the setting on and off, and in wait-for-Stop mode.
+- `settingKeepsModelLoaded`: on, the model loads and stays past the idle keep-alive through an answer; off, it closes 180 s later; the setting is saved.
+- `settingLoadsAfterLaunch`, `launchWithSettingOffLoadsNothing`: a relaunched service reads the setting and loads at `launchWorkDidEnd()` only when it is on.
+- `recordingRuleWinsOverSetting`: on 16 GB, a recording closes the kept model, focus loads nothing, the answer closes it, and Stop loads it again and keeps it.
+- `largeMacKeepsModelDuringRecording`: on 32 GB the kept model stays through a recording and its answers.
+- `modelChangeFollowsSetting`: with the setting on, a deleted model closes and a new one loads.
+- `focusLoadsThenIdleCloses`: focus loads once, not again while loading or loaded, and closes after 180 s with no question.
+- `focusLoadConditions`: no load with no transcript, no model, a wait-for-Stop recording, or an answer waiting.
+- `questionDuringLoadAhead`: a question sent during the load shows `.loadingModel`, then completes on the same model.
+- `loadTimeBecomesEstimate`: the first load (20 s on a test clock) has no estimate and is stored; the next load's estimate is 20 s, and its own 31 s replaces it.
+- `failedLoadStoresNothing`: a failed open stores no time and leaves no `modelLoad`.

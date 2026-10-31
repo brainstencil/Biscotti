@@ -169,3 +169,5 @@ Note for F13 (from the code review): while the list follows, the `onChange(of: F
 | U4 | "System audio may be denied — Fix…" during a recording | Settings lists System Audio as "Granted ✓"; the banner showed during the manager's recording | user |
 
 The task "chat pointer, hover, keyboard, preview, restore" (30 October 2026, `.specs_skill_state/tasks/chat-pointer-hover-keyboard-preview-restore.md`) addresses U1, U3 and F6/A12: chips show the hand pointer, are Tab stops between the header buttons and Copy in reading order (Space or Return goes to the line), and read "Go to m:ss in the transcript"; every chat button has one hover state. It also adds the chip preview and restores each meeting's open thread and draft after a relaunch (Interface Lineage audit rows 13 and 28). The user re-checks the pointer, the hover states and the Tab order on hardware after the commit.
+
+The user rechecked the build at 2933e86 (this task plus B10) on hardware on 30 October 2026, 21:10–21:18, and it passed: "chips, preview, hover, Tab, restore, the load bar, the typing dots and the Keep the AI Model Ready setting all look right."

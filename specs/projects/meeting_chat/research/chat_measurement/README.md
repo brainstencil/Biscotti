@@ -7,7 +7,7 @@ Results of the chat measurement ([components/chat_measurement.md](../../componen
 - **Contention: the default fails on the Low Power Mode run.** That run stands in for a slower chip. One live decode inside an answer took 5.16 s, over the rule's 5 s limit, so the contention rule fails, and phase 7 (the live hold, and the higher-watchdog-limit remedy) applies. There was no watchdog reset, and the live transcript caught up at once after every answer. At normal power both concurrent runs pass: `concurrent-e2b` (longest decode in an answer 3.25 s) and `concurrent-12b` (2.83 s), with no reset and a catch-up of 0 s after every answer. **Decided 29 October 2026 (Backlog decision B5):** the failure is accepted with no remedy, and answers run beside the live transcript on every Mac.
 - **Memory:** 16 GB Macs (E2B) and 24 GB Macs (12B) fit their budgets with room to spare, so chat runs during recordings there. 8 GB Macs (E2B) peaked at 2.96 GB against a 3 GB budget. That passes the rule by 0.04 GB, less than the figure's known error.
 - **Thresholds, decided 29 October 2026 (Backlog decision B4):** `ChatResourcePolicy.waitForStopMaximumMemory` stays 0, as the rule says, so 8 GB Macs answer during recordings once the user turns their live transcript on. Phase 6 had proposed 8 GB, which made those Macs answer only after Stop; see [Memory against each tier's budget](#memory-against-each-tiers-budget). `closeAfterAnswerBelowMemory` stays at 24 GB.
-- **Not run here:** `make test-ai`, which is for the user.
+- **AI test:** the user ran `MeetingChatAITests` on 30 October 2026 with Gemma 4 12B, and it passed: 18 of 18 cited times are valid. See [What remains](#what-remains).
 - **Phase 7 (remedies):** phase 7 built the live hold and the `.holdLiveTranscript` mode, off on every Mac. The held run with Low Power Mode on (`lowpower-e2b-hold`) never ran: Low Power Mode was not turned on within the 3 hours the run waited. The higher watchdog limit was estimated from the phase 6 runs: the three runs with live decodes inside answers all pass against a 20 s limit while answering. The user chose no change (B5), so the hold was removed and the higher limit is not built; see [Phase 7: remedies](#phase-7-remedies).
 
 ## Hardware and software
@@ -330,6 +330,6 @@ Decided on 29 October 2026, in the Backlog phase:
 - **B4, the 8 GB proposal:** not taken. `waitForStopMaximumMemory` stays 0, so 8 GB Macs answer during recordings once the user turns their live transcript on.
 - **B5, contention:** no remedy. Answers run beside the live transcript on every Mac, the live hold was removed, and the held run (`lowpower-e2b-hold`) will not run.
 
-For the user:
+The AI test, run by the user on 30 October 2026:
 
-- **Run `make test-ai`**, which includes the `MeetingChatAITests` suite.
+- **`MeetingChatAITests` passed.** Gemma 4 12B (`gemma-4-12b-it-UD-Q4_K_XL.gguf`, given with `LLM_MODEL_PATH`) answered the five fixed questions about the fixture transcript, and 18 of its 18 cited times point at lines it was given (the rule is at least 90%). The run took 112 s on the M1 Max above. It ran on `codex/meeting-chat` at 1b974d0, whose chat code and AI test are the same as this branch's; only the default model folder differs, which `LLM_MODEL_PATH` overrides. Only this suite ran, not all of `make test-ai`.

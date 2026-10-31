@@ -22,3 +22,6 @@ calibration.json
 clean-worktree*
 
 .worktrees/
+
+# Log captures of chat measurement runs (large; the results are the .json and .md beside them)
+Tools/chat_bench/results/*.ndjson

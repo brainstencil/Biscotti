@@ -5,6 +5,7 @@ import Foundation
 import Intelligence
 import LiveTranscriptionService
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import os
@@ -31,10 +32,7 @@ public extension AppCore {
         storageRoot: URL,
         transcriberServiceName: String
     ) throws -> AppCore {
-        let logger = Logger(
-            subsystem: "net.scosman.biscotti",
-            category: "startup"
-        )
+        let logger = Logger(subsystem: "net.scosman.biscotti", category: "startup")
 
         logger.info("AppCore.live: DataStore init starting")
         let store = try DataStore(storage: .onDisk(storageRoot))
@@ -70,9 +68,8 @@ public extension AppCore {
         permissions.setNotificationAuthorizer(notifAuth)
 
         logger.info("AppCore.live: ModelManager + Intelligence init")
-        let (modelManager, intelligence) = buildModelAndIntelligence(
-            store: store
-        )
+        let llmBroker = LLMBroker(opener: LiveLLMConnectionOpener())
+        let (modelManager, intelligence) = buildModelAndIntelligence(store: store, llmBroker: llmBroker)
 
         logger.info("AppCore.live: constructing AppCore")
         let core = AppCore(
@@ -85,18 +82,31 @@ public extension AppCore {
             notifications: notifications,
             intelligence: intelligence,
             modelManager: modelManager,
-            liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName)
+            llmBroker: llmBroker,
+            liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName),
+            chatDefaults: .standard
         )
+        startChatLoadDriverIfRequested(core)
         logger.info("AppCore.live: done")
         return core
     }
 
+    /// Debug builds: the chat measurement's load driver, when the app was
+    /// launched with `-chatLoadTest <plan.json>` (Tools/chat_bench).
+    @MainActor
+    private static func startChatLoadDriverIfRequested(_ core: AppCore) {
+        #if DEBUG
+            ChatLoadDriver.startIfRequested(chat: core.chat, app: core.chatLoadControls())
+        #endif
+    }
+
     /// Builds the live `ModelManager` + `Intelligence` with real LocalLLM-backed
-    /// implementations. Extracted to keep `live(storageRoot:…)` under
-    /// the function body length lint limit.
+    /// implementations. `Intelligence` reaches the model through `llmBroker`,
+    /// the connection chat shares. Extracted to keep `live(storageRoot:…)`
+    /// under the function body length lint limit.
     @MainActor
     private static func buildModelAndIntelligence(
-        store: DataStore
+        store: DataStore, llmBroker: LLMBroker
     ) -> (ModelManager, Intelligence) {
         let modelProvider = LiveModelProvider()
         let hardwareProbe = LiveHardwareProbe()
@@ -105,10 +115,9 @@ public extension AppCore {
             models: modelProvider,
             hardware: hardwareProbe
         )
-        let llmRunner = LiveLLMRunner()
         let intelligence = Intelligence(
             store: store,
-            llm: llmRunner,
+            llm: BrokeredLLMRunner(broker: llmBroker),
             modelManager: modelManager,
             settings: { [store] in
                 let saved = try? await store.settings()
@@ -294,3 +303,64 @@ private struct LiveTranscriberAdapter: Transcribing {
         await transcriber.shutdown()
     }
 }
+
+#if DEBUG
+
+    // MARK: - Chat measurement
+
+    extension AppCore {
+        /// What the chat load driver uses to run a plan with nobody at the
+        /// Mac: the end of the launch and of the speech models' preparation,
+        /// the Settings model picker's path, and the Record and Stop buttons'
+        /// paths. Debug builds only.
+        ///
+        /// - Parameter settle: How long no speech model must have been
+        ///   prepared before the launch counts as done.
+        func chatLoadControls(settle: Duration = .seconds(3)) -> ChatLoadAppControls {
+            ChatLoadAppControls(
+                waitForLaunch: { [weak self] in
+                    await self?.waitUntilLaunched()
+                    await self?.waitUntilModelsPrepared(settle: settle)
+                },
+                selectModel: { [weak self] id in
+                    guard let self else { return false }
+                    await modelManager.selectModel(id: id)
+                    return modelManager.activeModelID == id
+                },
+                startRecording: { [weak self] in await self?.startRecording() },
+                stopRecording: { [weak self] in await self?.stopRecording() }
+            )
+        }
+
+        /// Returns once no speech model has been prepared for `settle`, as for
+        /// a user who opens the app ahead of a meeting. A new build, or a
+        /// Core ML cache that macOS purged under low disk space, compiles the
+        /// models for minutes first, and a recording started meanwhile holds
+        /// its live transcript until the live model's compile ends.
+        ///
+        /// It checks the preparation after every sleep of `poll`, however long
+        /// the sleep took, and ends only once every check over `settle` found
+        /// no model being prepared. So a sleep that overran, as when the
+        /// process stalls during a long compile, never ends the wait
+        /// unchecked. Writes one `chat-load` line, `launch-wait-done
+        /// seconds=`, when it ends.
+        ///
+        /// - Returns: How long it waited, on `clock`.
+        @discardableResult
+        func waitUntilModelsPrepared(
+            settle: Duration = .seconds(3),
+            poll: Duration = .milliseconds(500),
+            clock: any Clock<Duration> = ContinuousClock()
+        ) async -> Duration {
+            let waited = await waitWhilePreparingSpeechModels(settle: settle, poll: poll, on: clock)
+            if !Task.isCancelled {
+                let seconds = Double(waited.components.seconds) + Double(waited.components.attoseconds) / 1e18
+                chatLoadLogger.info("launch-wait-done seconds=\(String(format: "%.1f", seconds), privacy: .public)")
+            }
+            return waited
+        }
+    }
+
+    /// The chat load driver's category, which `Tools/chat_bench` captures.
+    private let chatLoadLogger = Logger(subsystem: "net.scosman.biscotti", category: "chat-load")
+#endif

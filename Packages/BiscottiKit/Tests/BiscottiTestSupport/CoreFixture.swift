@@ -8,6 +8,7 @@ import LiveTranscriptionService
 import LocalLLM
 import MCPServer
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import Permissions
@@ -37,8 +38,18 @@ public struct CoreFixture {
     public let fakeScheduler: FakeScheduler?
     public let intelligence: Intelligence
     public let modelManager: ModelManager
-    public let fakeLLMRunner: FakeCoreLLMRunner
+    /// The broker `intelligence` and `core` share, on `llmOpener` and `llmClock`.
+    public let llmBroker: LLMBroker
+    /// Hands out scripted model sessions and counts model loads.
+    public let llmOpener: ScriptedLLMOpener
+    /// Drives `llmBroker`'s idle close.
+    public let llmClock: TestClock
     public let fakeModelProvider: FakeCoreModelProvider
+
+    /// `core.chat`, on `llmBroker` and the fixture's memory.
+    public var chat: MeetingChatService {
+        core.chat
+    }
 
     public func cleanup() {
         try? FileManager.default.removeItem(at: storageRoot)
@@ -362,50 +373,7 @@ public final class FakeActivitySource: ActivitySource,
     }
 }
 
-// MARK: - Fake LLM fakes for CoreFixture
-
-/// A simple fake LLM runner for AppCore integration tests.
-/// Records session usage; does not return meaningful LLM output.
-public final class FakeCoreLLMRunner: LLMRunning, @unchecked Sendable {
-    /// Number of times `withSession` was called.
-    public var sessionCount = 0
-
-    public init() {}
-
-    public func withSession<T: Sendable>(
-        model _: URL,
-        config _: LocalLLM.EngineConfig,
-        _ body: @Sendable (any LLMSession) async throws -> T
-    ) async throws -> T {
-        sessionCount += 1
-        return try await body(FakeCoreLLMSession())
-    }
-}
-
-/// A minimal fake LLM session that returns empty responses.
-public struct FakeCoreLLMSession: LLMSession {
-    public func countTokens(
-        messages _: [LocalLLM.LLMMessage]
-    ) async throws -> Int {
-        100
-    }
-
-    public func reconfigure(contextSize _: Int) async throws {}
-
-    public func generate(
-        messages _: [LocalLLM.LLMMessage],
-        options _: LocalLLM.GenerationOptions
-    ) async throws -> String {
-        ""
-    }
-
-    public func generateStreaming(
-        messages _: [LocalLLM.LLMMessage],
-        options _: LocalLLM.GenerationOptions
-    ) async -> AsyncThrowingStream<LocalLLM.StreamEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
-    }
-}
+// MARK: - Model fakes for CoreFixture
 
 /// A fake model provider for AppCore integration tests.
 /// Supports multi-model protocol with configurable per-model download state.
@@ -502,6 +470,8 @@ public func makeCoreFixture(
     mcpServerPort: Int = 0,
     liveTranscription: LiveTranscriptionService? = nil,
     sendEnvironment: SendEnvironment? = nil,
+    chatPolicy: ChatResourcePolicy? = nil,
+    chatClock: any Clock<Duration> = ContinuousClock(),
     testName: String = "Test"
 ) throws -> CoreFixture {
     let store = try DataStore(storage: .inMemory)
@@ -581,7 +551,9 @@ public func makeCoreFixture(
     let scheduler: any AppScheduler = fakeScheduler
         ?? LiveAppScheduler()
 
-    let fakeLLMRunner = FakeCoreLLMRunner()
+    let llmOpener = ScriptedLLMOpener()
+    let llmClock = TestClock()
+    let llmBroker = LLMBroker(opener: llmOpener, clock: llmClock)
     let fakeModelProvider = FakeCoreModelProvider(
         downloaded: modelDownloaded
     )
@@ -603,7 +575,7 @@ public func makeCoreFixture(
 
     let intelligence = Intelligence(
         store: store,
-        llm: fakeLLMRunner,
+        llm: BrokeredLLMRunner(broker: llmBroker),
         modelManager: modelManager,
         settings: {
             AISettings(
@@ -611,6 +583,19 @@ public func makeCoreFixture(
                 summaryPrompt: IntelligencePrompts.defaultSummaryPrompt
             )
         }
+    )
+
+    let live = liveTranscription ?? .inert()
+    // The fixture's memory, so chat never reads this Mac's.
+    let chat = MeetingChatService(
+        store: store,
+        broker: llmBroker,
+        modelManager: modelManager,
+        live: live,
+        recording: recording,
+        transcription: transcription,
+        policy: chatPolicy ?? ChatResourcePolicy(physicalMemory: hardwareRAMBytes),
+        clock: chatClock
     )
 
     let core = AppCore(
@@ -623,10 +608,12 @@ public func makeCoreFixture(
         notifications: notificationService,
         intelligence: intelligence,
         modelManager: modelManager,
+        llmBroker: llmBroker,
         scheduler: scheduler,
         mcpServer: MCPServerController(store: store, port: mcpServerPort),
-        liveTranscription: liveTranscription,
-        sendEnvironment: sendEnvironment ?? .live
+        liveTranscription: live,
+        sendEnvironment: sendEnvironment ?? .live,
+        chat: chat
     )
 
     return CoreFixture(
@@ -645,7 +632,9 @@ public func makeCoreFixture(
         fakeScheduler: fakeScheduler,
         intelligence: intelligence,
         modelManager: modelManager,
-        fakeLLMRunner: fakeLLMRunner,
+        llmBroker: llmBroker,
+        llmOpener: llmOpener,
+        llmClock: llmClock,
         fakeModelProvider: fakeModelProvider
     )
 }

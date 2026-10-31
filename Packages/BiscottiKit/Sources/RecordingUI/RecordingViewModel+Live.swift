@@ -1,6 +1,7 @@
 import Foundation
 import LiveTranscriptionService
 import LiveTranscriptModel
+import MeetingChat
 import Recording
 import TranscriptUI
 
@@ -133,7 +134,10 @@ public extension RecordingViewModel {
     }
 
     /// The drawer's two lines while a live start is slow. Chosen by the user
-    /// on 25 October 2026: say so when low disk space is why.
+    /// on 25 October 2026: say so when low disk space is why. Every start
+    /// catches up from the start of the recording: one with the recording
+    /// from the audio held meanwhile, one mid-recording from the recording's
+    /// files (meeting_chat backlog B2).
     static func slowStartMessages(lowOnDisk: Bool) -> [String] {
         if lowOnDisk {
             [
@@ -181,12 +185,18 @@ public extension RecordingViewModel {
 
     // MARK: Actions
 
+    /// Opening the drawer closes the chat card: the bottom is one slot.
     func toggleDrawer() {
+        if !live.isDrawerExpanded {
+            chat?.isCardOpen = false
+        }
+        transcriptOpenedFromChat = false
         live.toggleDrawer()
     }
 
     func collapseDrawer() {
         live.isDrawerExpanded = false
+        transcriptOpenedFromChat = false
     }
 
     func setLanguage(_ language: LiveLanguage) async {
@@ -203,6 +213,8 @@ public extension RecordingViewModel {
     /// from capture start; the transcript's from the first mic buffer.
     func revealNoteInTranscript(_ note: MeetingNote) {
         let offset = core.recording.state.timelineOffset ?? 0
+        chat?.isCardOpen = false
+        transcriptOpenedFromChat = false
         live.reveal(atRecordingTime: note.timestamp + offset)
     }
 

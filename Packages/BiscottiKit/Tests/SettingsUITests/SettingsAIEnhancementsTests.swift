@@ -46,6 +46,41 @@ struct SettingsAIEnhancementsTests {
         #expect(settings2.aiAnalysisEnabled == true)
     }
 
+    // MARK: - Keep the AI model ready
+
+    @Test("Keep the AI model ready is off by default, and turning it on loads the model")
+    func keepModelReadyTogglesThroughChat() async throws {
+        let fixture = try makeCoreFixture(modelDownloaded: true)
+        defer { fixture.cleanup() }
+        let viewModel = SettingsViewModel(core: fixture.core)
+        #expect(viewModel.keepModelReady == false)
+
+        await viewModel.setKeepModelReady(true)
+
+        #expect(viewModel.keepModelReady)
+        #expect(fixture.chat.keepsModelReady)
+        try await waitUntil("the model to load") { fixture.llmOpener.openCount == 1 }
+        await viewModel.setKeepModelReady(false)
+        #expect(viewModel.keepModelReady == false)
+    }
+
+    @Test("the footnote states the selected model's memory, and on smaller Macs that recordings still close it")
+    func keepModelReadyFootnote() throws {
+        let large = try makeCoreFixture(modelDownloaded: true, hardwareRAMBytes: 32 << 30)
+        defer { large.cleanup() }
+        #expect(SettingsViewModel(core: large.core).keepModelReadyFootnote
+            == "Loads the AI model at launch and keeps it loaded, so chat answers sooner. Uses about 7 GB of memory while Biscotti is open.")
+
+        let small = try makeCoreFixture(modelDownloaded: true, hardwareRAMBytes: 16 << 30)
+        defer { small.cleanup() }
+        #expect(SettingsViewModel(core: small.core).keepModelReadyFootnote.hasSuffix(
+            "Uses about 7 GB of memory while Biscotti is open. During recordings, it still closes after each answer to free memory."
+        ))
+
+        #expect(SettingsViewModel.memoryCostText(bytes: 3_200_000_000) == "Uses about 3 GB of memory while Biscotti is open.")
+        #expect(SettingsViewModel.memoryCostText(bytes: 400_000_000) == "Uses about 1 GB of memory while Biscotti is open.")
+    }
+
     // MARK: - Revert on failure
 
     @Test("setAIAnalysisEnabled reverts on store failure")
@@ -248,8 +283,9 @@ private func buildAppCore(
         models: fakeModelProvider,
         hardware: fakeHardwareProbe
     )
+    let llmBroker = LLMBroker(opener: ScriptedLLMOpener())
     let intelligence = Intelligence(
-        store: store, llm: FakeCoreLLMRunner(),
+        store: store, llm: BrokeredLLMRunner(broker: llmBroker),
         modelManager: modelManager,
         settings: { AISettings(enabled: true) }
     )
@@ -261,7 +297,8 @@ private func buildAppCore(
         detector: MeetingDetector(catalog: catalog, source: FakeActivitySource()),
         notifications: NotificationService(provider: FakeTestNotificationCenter()),
         intelligence: intelligence,
-        modelManager: modelManager
+        modelManager: modelManager,
+        llmBroker: llmBroker
     )
 }
 

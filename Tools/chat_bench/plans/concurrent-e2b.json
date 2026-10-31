@@ -1,0 +1,23 @@
+{
+  "name": "concurrent-e2b",
+  "mode": "concurrent",
+  "model": "gemma-4-e2b",
+  "record": {
+    "startAfterSeconds": 10,
+    "durationSeconds": 900
+  },
+  "closeModelAfterAnswer": true,
+  "startAfter": "recordingStart",
+  "startDelaySeconds": 120,
+  "intervalSeconds": 60,
+  "questions": [
+    "What did they decide about the shape of the remote?",
+    "What did they say about dropping the number buttons?",
+    "What did I say about the scroll-wheel push-button?",
+    "What did they decide about speech recognition?",
+    "How much more does an integrated button cost than a normal one?",
+    "List the action items so far.",
+    "Which buttons are they keeping?",
+    "What launch date did they set for the remote?"
+  ]
+}

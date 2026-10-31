@@ -37,6 +37,8 @@ let package = Package(
         .library(name: "Vocabulary", targets: ["Vocabulary"]),
         .library(name: "MCPServer", targets: ["MCPServer"]),
         .library(name: "VoiceprintMatching", targets: ["VoiceprintMatching"]),
+        .library(name: "MeetingChat", targets: ["MeetingChat"]),
+        .library(name: "MeetingChatUI", targets: ["MeetingChatUI"]),
         .executable(name: "voiceprint-cli", targets: ["voiceprint-cli"])
     ],
     dependencies: [
@@ -72,6 +74,7 @@ let package = Package(
         .testTarget(
             name: "DataStoreTests",
             dependencies: ["DataStore", .product(name: "Transcription", package: "Transcription")],
+            resources: [.copy("Fixtures")],
             swiftSettings: warningsAsErrors
         ),
         .target(
@@ -203,6 +206,7 @@ let package = Package(
                 "Intelligence",
                 "LiveTranscriptionService",
                 "MCPServer",
+                "MeetingChat",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
@@ -231,6 +235,7 @@ let package = Package(
                 "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
+                "MeetingChat",
                 "MeetingDetection",
                 "Notifications",
                 "Permissions",
@@ -260,6 +265,7 @@ let package = Package(
                 "LiveTranscriptionService",
                 "MCPServer",
                 "MeetingCatalog",
+                "MeetingChat",
                 "MeetingDetailUI",
                 "MeetingDetection",
                 "Notifications",
@@ -309,6 +315,8 @@ let package = Package(
                 "DataStore",
                 "DesignSystem",
                 "LiveTranscriptionService",
+                "MeetingChat",
+                "MeetingChatUI",
                 "Permissions",
                 "Recording",
                 "TranscriptUI",
@@ -325,6 +333,7 @@ let package = Package(
                 "Calendar",
                 "DataStore",
                 "LiveTranscriptionService",
+                "MeetingChat",
                 "MeetingDetection",
                 "Permissions",
                 "Recording",
@@ -369,6 +378,8 @@ let package = Package(
                 "Intelligence",
                 "LiveTranscriptionService",
                 "MarkdownEditorUI",
+                "MeetingChat",
+                "MeetingChatUI",
                 "SummaryPromptUI",
                 "TranscriptionService",
                 "TranscriptUI",
@@ -392,6 +403,7 @@ let package = Package(
                 "Intelligence",
                 "LiveTranscriptionService",
                 "MeetingCatalog",
+                "MeetingChat",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
@@ -444,6 +456,7 @@ let package = Package(
                 "Formatting",
                 "HomeUI",
                 "LiveTranscriptionService",
+                "MeetingChat",
                 "MeetingListUI",
                 "MeetingDetailUI",
                 "OnboardingUI",
@@ -464,6 +477,7 @@ let package = Package(
                 "HomeUI",
                 "LiveTranscriptionService",
                 "MeetingCatalog",
+                "MeetingChat",
                 "Permissions",
                 "Recording",
                 "TranscriptionService",
@@ -669,6 +683,7 @@ let package = Package(
             name: "IntelligenceTests",
             dependencies: [
                 "Intelligence",
+                "BiscottiTestSupport",
                 "DataStore",
                 "VoiceprintMatching",
                 .product(name: "LocalLLM", package: "LocalLLM"),
@@ -767,6 +782,61 @@ let package = Package(
         .testTarget(
             name: "VoiceprintMatchingTests",
             dependencies: ["VoiceprintMatching", "DataStore"],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
+            name: "MeetingChat",
+            dependencies: [
+                "DataStore",
+                "Formatting",
+                "Intelligence",
+                "LiveTranscriptionService",
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LocalLLM", package: "LocalLLM")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "MeetingChatTests",
+            dependencies: [
+                "MeetingChat",
+                "BiscottiTestSupport",
+                "DataStore",
+                "Intelligence",
+                "LiveTranscriptionService",
+                .product(name: "LiveTranscriptModel", package: "Transcription"),
+                .product(name: "LocalLLM", package: "LocalLLM"),
+                .product(name: "Transcription", package: "Transcription")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        // Heavy: the real model answers questions. Runs only under `make test-ai`.
+        .testTarget(
+            name: "MeetingChatAITests",
+            dependencies: [
+                "MeetingChat",
+                "DataStore",
+                .product(name: "LocalLLM", package: "LocalLLM")
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .target(
+            name: "MeetingChatUI",
+            dependencies: [
+                "DataStore",
+                "DesignSystem",
+                "MeetingChat",
+                "TranscriptUI"
+            ],
+            swiftSettings: warningsAsErrors
+        ),
+        .testTarget(
+            name: "MeetingChatUITests",
+            dependencies: [
+                "MeetingChatUI",
+                "DataStore",
+                "MeetingChat"
+            ],
             swiftSettings: warningsAsErrors
         ),
         .executableTarget(

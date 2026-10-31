@@ -1,0 +1,177 @@
+{
+  "run": "baseline-discarded",
+  "plan": {
+    "name": "baseline",
+    "mode": "concurrent",
+    "closeModelAfterAnswer": "-",
+    "startAfter": "recordingStart",
+    "delay": "0.0",
+    "interval": "0.0",
+    "questions": "0",
+    "model": "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+    "record": "10.0+900.0",
+    "live": "on"
+  },
+  "range": {
+    "first": "2026-10-28T14:33:33-07:00",
+    "last": "2026-10-28T14:49:56-07:00"
+  },
+  "questions": {
+    "planned": 0,
+    "asked": 0,
+    "skipped": [],
+    "notSent": []
+  },
+  "answers": [],
+  "recording": {
+    "started": true,
+    "stopped": true
+  },
+  "memory": {
+    "footprint": {
+      "app": {
+        "peakMiB": 191.2,
+        "medianMiB": 116.2
+      },
+      "transcriber": {
+        "peakMiB": 140.5,
+        "medianMiB": 82.4
+      },
+      "llm": {
+        "peakMiB": 367.0,
+        "medianMiB": 361.8
+      },
+      "sum": {
+        "peakMiB": 612.3,
+        "medianMiB": 199.6
+      }
+    },
+    "resident": {
+      "app": {
+        "peakMiB": 264.1,
+        "medianMiB": 237.7
+      },
+      "transcriber": {
+        "peakMiB": 276.3,
+        "medianMiB": 180.1
+      },
+      "llm": {
+        "peakMiB": 2861.9,
+        "medianMiB": 2861.7
+      },
+      "sum": {
+        "peakMiB": 3314.6,
+        "medianMiB": 421.2
+      }
+    },
+    "decision": {
+      "peakMiB": 3110.8,
+      "medianMiB": 200.0
+    },
+    "samples": 855
+  },
+  "memoryAfterStop": {
+    "decision": {
+      "peakMiB": 524.0,
+      "medianMiB": 523.8
+    },
+    "samples": 55
+  },
+  "memoryBudgets": [
+    {
+      "mac": "8 GB",
+      "budgetGB": 3,
+      "model": "E2B",
+      "appliesToThisRun": true,
+      "fits": false
+    },
+    {
+      "mac": "16 GB",
+      "budgetGB": 11,
+      "model": "E2B",
+      "appliesToThisRun": true,
+      "fits": true
+    },
+    {
+      "mac": "24 GB",
+      "budgetGB": 19,
+      "model": "12B",
+      "appliesToThisRun": false,
+      "fits": true
+    }
+  ],
+  "liveDelaySeconds": {
+    "drawn": {
+      "inside": {
+        "median": null,
+        "p95": null,
+        "count": 0
+      },
+      "outside": {
+        "median": 1.319,
+        "p95": 3.031,
+        "count": 2068
+      }
+    },
+    "update": {
+      "inside": {
+        "median": null,
+        "p95": null,
+        "count": 0
+      },
+      "outside": {
+        "median": 0.825,
+        "p95": 1.833,
+        "count": 6065
+      }
+    }
+  },
+  "liveChunksDropped": {},
+  "longestDecodeMs": {
+    "inside": null,
+    "outside": 2458.0
+  },
+  "watchdogResets": 0,
+  "watchdogResetTimes": [],
+  "engineRestarts": 0,
+  "engineFailures": 0,
+  "catchUpSeconds": {
+    "median": null,
+    "perAnswer": []
+  },
+  "timeToFirstTokenSeconds": {
+    "cold": [],
+    "warm": []
+  },
+  "tokensPerSecond": {
+    "median": null
+  },
+  "citations": {
+    "cited": 0,
+    "linked": 0,
+    "validity": null
+  },
+  "outcomes": {
+    "failed": 0,
+    "partial": 0
+  },
+  "model": {
+    "loadsDuringRecording": 1,
+    "loadsOutsideRecording": 0,
+    "files": [
+      "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf"
+    ],
+    "closes": {
+      "idle": 1
+    }
+  },
+  "warnings": [
+    "2 answers not asked by the driver (someone asked in the app): their load falls outside the answer windows"
+  ],
+  "contention": {
+    "passes": null,
+    "reasons": [
+      "no answers"
+    ]
+  }
+}

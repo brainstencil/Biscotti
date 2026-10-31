@@ -43,6 +43,37 @@ extension AppCore {
         physicalMemory > 8 << 30
     }
 
+    /// Returns once no speech model has been prepared for `settle`: the
+    /// launch work that needs the GPU has ended. It checks the preparation
+    /// after every sleep of `poll`, however long the sleep took, and ends only
+    /// once every check over `settle` found no model being prepared, so a
+    /// sleep that overran, as when the process stalls during a long compile,
+    /// never ends the wait unchecked.
+    ///
+    /// - Returns: How long it waited, on `clock`.
+    @discardableResult
+    func waitWhilePreparingSpeechModels<C: Clock<Duration>>(
+        settle: Duration = .seconds(3),
+        poll: Duration = .milliseconds(500),
+        on clock: C = ContinuousClock()
+    ) async -> Duration {
+        let start = clock.now
+        // The first of the latest checks in a row that found no preparation.
+        var idleSince: C.Instant?
+        while !Task.isCancelled {
+            let now = clock.now
+            if transcription.isPreparingModels {
+                idleSince = nil
+            } else {
+                let since = idleSince ?? now
+                if since.duration(to: now) >= settle { break }
+                idleSince = since
+            }
+            try? await clock.sleep(for: poll)
+        }
+        return start.duration(to: clock.now)
+    }
+
     /// The model a recording's live session loads, when it will run one.
     var liveModelForRecording: String? {
         liveTranscription.canStartLive ? LiveTranscriptionDefaults.whisperModel : nil

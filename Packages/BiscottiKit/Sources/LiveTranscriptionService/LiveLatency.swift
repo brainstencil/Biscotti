@@ -17,11 +17,16 @@ import os
 ///   the next drawing.
 ///
 /// A summary is logged every `windowLength` and when the session ends.
+/// Debug builds also log each update's decode time and chunk delays, and
+/// each drawing's chunk delays, as info lines in the same category, for the
+/// chat measurement (`Tools/chat_bench`). It captures them with
+/// `log stream`, which carries no signposts.
 /// Backfill, replayed and paused audio are not measured: they wait by design.
 @MainActor
 final class LiveLatency {
     static let signposter = OSSignposter(subsystem: "net.scosman.biscotti", category: "live.latency")
     private static let log = Logger(subsystem: "net.scosman.biscotti", category: "live")
+    private static let measurements = Logger(subsystem: "net.scosman.biscotti", category: "live.latency")
     /// A covered chunk the drawer has not drawn within this long is not
     /// measured: the drawer is closed or not on screen.
     static let drawWindow: Duration = .seconds(5)
@@ -84,6 +89,7 @@ final class LiveLatency {
         chunks.append(TakenChunk(endTime: chunk.endTime, interval: begin("Live chunk")))
         if chunks.count > Self.waitingLimit {
             Self.signposter.endInterval("Live chunk", chunks.removeFirst().interval.state, "not covered")
+            logDropped(1, reason: "notCovered")
         }
         waiting[chunk.track] = chunks
     }
@@ -98,10 +104,13 @@ final class LiveLatency {
         }
         let hasText = !update.rows.isEmpty
         var chunks = waiting[update.track] ?? []
+        var delays: [Duration] = []
         let reached = update.transcribedThrough + LiveTranscriptStore.gapJoinTolerance
         while let chunk = chunks.first, chunk.endTime <= reached {
             chunks.removeFirst()
-            record(moment - chunk.interval.start, in: \.chunkToUpdate)
+            let delay = moment - chunk.interval.start
+            record(delay, in: \.chunkToUpdate)
+            delays.append(delay)
             if hasText {
                 Self.signposter.emitEvent("Covered", id: chunk.interval.id)
                 covered.append(CoveredChunk(interval: chunk.interval, coveredAt: moment))
@@ -110,6 +119,7 @@ final class LiveLatency {
             }
         }
         waiting[update.track] = chunks
+        logMeasurements(decodeMilliseconds: update.decodeMilliseconds, chunkDelays: delays, to: "update")
         if hasText, undrawnUpdate == nil {
             undrawnUpdate = begin("Update to drawn")
         }
@@ -121,11 +131,13 @@ final class LiveLatency {
         guard !hasEnded else { return }
         let moment = now()
         dropUndrawn(at: moment)
-        for chunk in covered {
-            record(moment - chunk.interval.start, in: \.chunkToDrawn)
+        let delays = covered.map { moment - $0.interval.start }
+        for (chunk, delay) in zip(covered, delays) {
+            record(delay, in: \.chunkToDrawn)
             Self.signposter.endInterval("Live chunk", chunk.interval.state)
         }
         covered = []
+        logMeasurements(chunkDelays: delays, to: "drawn")
         if let update = undrawnUpdate {
             record(moment - update.start, in: \.updateToDrawn)
             Self.signposter.endInterval("Update to drawn", update.state)
@@ -136,16 +148,25 @@ final class LiveLatency {
     /// A new engine starts from its own audio: the chunks the old one took
     /// and never covered are not measured.
     func generationChanged() {
-        for chunk in waiting.values.joined() {
+        logDropped(endWaiting(), reason: "engineChanged")
+    }
+
+    /// Ends the intervals of the chunks no update covered, and returns how many there were.
+    @discardableResult
+    private func endWaiting() -> Int {
+        let chunks = Array(waiting.values.joined())
+        for chunk in chunks {
             Self.signposter.endInterval("Live chunk", chunk.interval.state, "engine changed")
         }
         waiting = [:]
+        return chunks.count
     }
 
     /// The session ended: logs its figures once.
     func end() {
         guard !hasEnded else { return }
-        generationChanged()
+        // The last chunks of a session are never covered; that is no loss.
+        endWaiting()
         dropUndrawn(at: nil)
         hasEnded = true
         let summary = session.summary
@@ -160,9 +181,37 @@ final class LiveLatency {
     }
 
     private func record(_ duration: Duration, in figure: WritableKeyPath<Figures, LatencyHistogram>) {
-        let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        let seconds = Self.seconds(duration)
         session[keyPath: figure].record(seconds)
         window[keyPath: figure].record(seconds)
+    }
+
+    /// Debug builds: `decode ms=812` and `chunks to=update s=1.210,0.980`
+    /// (each chunk's delay since it was taken, to this update or drawing).
+    /// Chunks that are never measured have their own line (`logDropped`).
+    private func logMeasurements(decodeMilliseconds: Double? = nil, chunkDelays: [Duration], to stage: String) {
+        #if DEBUG
+            if let decodeMilliseconds {
+                Self.measurements.info("decode ms=\(decodeMilliseconds, format: .fixed(precision: 0), privacy: .public)")
+            }
+            guard !chunkDelays.isEmpty else { return }
+            let delays = chunkDelays.map { String(format: "%.3f", Self.seconds($0)) }.joined(separator: ",")
+            Self.measurements.info("chunks to=\(stage, privacy: .public) s=\(delays, privacy: .public)")
+        #endif
+    }
+
+    /// Debug builds: `chunks dropped=3 reason=engineChanged`, for chunks no
+    /// update covered: more than `waitingLimit` behind, or taken by an engine
+    /// that was replaced.
+    private func logDropped(_ count: Int, reason: String) {
+        #if DEBUG
+            guard count > 0 else { return }
+            Self.measurements.info("chunks dropped=\(count, privacy: .public) reason=\(reason, privacy: .public)")
+        #endif
+    }
+
+    private static func seconds(_ duration: Duration) -> TimeInterval {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     /// Ends what waited for the drawer longer than `drawWindow`, or all of

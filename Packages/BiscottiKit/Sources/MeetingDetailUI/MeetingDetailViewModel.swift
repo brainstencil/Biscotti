@@ -10,6 +10,7 @@ import ImportExport
 import Intelligence
 import LiveTranscriptionService
 import LiveTranscriptModel
+import MeetingChat
 import SummaryPromptUI
 import TranscriptionService
 import TranscriptUI
@@ -77,14 +78,16 @@ public enum SendAlert: Equatable, Identifiable {
 /// editable title, and Open-in-Calendar deep link.
 @MainActor @Observable
 public final class MeetingDetailViewModel {
-    private let core: AppCore
+    let core: AppCore
     public let meetingID: UUID
+    /// This meeting's chat: its field, card and threads.
+    public let chat: MeetingChatState
     private let vocabulary: VocabularyService
     private let makePlayer: () -> any AudioPlaybackProviding
     private let liveDrafts: LiveDraftSource
 
     /// Injectable "now" for deterministic testing of time-gated UI.
-    private let currentDate: () -> Date
+    let currentDate: () -> Date
 
     /// Injectable callback for opening URLs (mirrors EventPreviewViewModel).
     /// Set by the app target to `NSWorkspace.shared.open`; tests inject a spy.
@@ -318,6 +321,9 @@ public final class MeetingDetailViewModel {
     /// the item holding this time once, then clears it.
     public var transcriptRevealTime: TimeInterval?
 
+    /// Bound to the list's `highlight`: the bubble a chat time cited, for 2 s.
+    public var transcriptHighlight: TranscriptHighlight?
+
     /// Bound to the list's `anchorTime`: the start time of the topmost
     /// visible item. Ignored by observation, because it changes as the
     /// reader scrolls and nothing on screen depends on it.
@@ -338,6 +344,7 @@ public final class MeetingDetailViewModel {
     ) {
         self.core = core
         self.meetingID = meetingID
+        chat = core.chat.state(for: meetingID)
         vocabulary = VocabularyService(store: core.store)
         self.makePlayer = makePlayer
         self.liveDrafts = liveDrafts ?? .live(core.liveTranscription)
@@ -366,8 +373,12 @@ public final class MeetingDetailViewModel {
         cancelPendingAutosaves()
 
         isLoading = true
+        // Whether the meeting has a transcript, from the detail read here, so
+        // chat does not read and map it again; nil if the read failed.
+        var hasTranscript: Bool?
         do {
             try await refreshData()
+            hasTranscript = MeetingChatService.hasTranscriptToAsk(detail?.preferredTranscript)
             hasAutoJumpedForPipeline = false
             await loadAudioPlayer()
         } catch {
@@ -375,6 +386,8 @@ public final class MeetingDetailViewModel {
             calendarContext = nil
         }
         syncDraft()
+        // Before the page shows, so its field never reads "no transcript" first.
+        await core.chat.load(meetingID: meetingID, hasTranscript: hasTranscript)
         isLoading = false
     }
 

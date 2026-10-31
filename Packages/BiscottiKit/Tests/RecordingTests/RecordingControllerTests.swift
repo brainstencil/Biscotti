@@ -2,8 +2,10 @@ import AudioCapture
 import BiscottiTestSupport
 import DataStore
 import Foundation
+import Observation
 import Permissions
 import Recording
+import Synchronization
 import Testing
 
 // MARK: - Test fixture
@@ -102,6 +104,48 @@ struct RecordingStartStopTests {
             #expect(hasMic)
             #expect(hasSystem)
         }
+    }
+
+    @Test("The recording meeting is set on start and cleared on stop, and elapsed ticks leave it alone")
+    @MainActor
+    func recordingMeetingIDIgnoresTicks() async throws {
+        let tick = CaptureState(isRecording: true, elapsed: 42.5, micLevel: 0, systemLevel: 0, startTimestamp: 0)
+        let fix = try makeFixture(stateValues: [tick])
+        defer { fix.cleanup() }
+        let changes = ChangeCount()
+
+        await fix.controller.start()
+        let meetingID = try #require(fix.controller.state.meetingID)
+        #expect(fix.controller.recordingMeetingID == meetingID)
+        withObservationTracking {
+            _ = fix.controller.recordingMeetingID
+        } onChange: {
+            changes.add()
+        }
+        try await pollUntil { fix.controller.state.elapsed == 42.5 }
+        #expect(fix.controller.state.elapsed == 42.5)
+        #expect(changes.total == 0)
+
+        _ = await fix.controller.stop()
+        #expect(fix.controller.recordingMeetingID == nil)
+    }
+
+    @Test("The recording's track files are known while it records, for the live transcript's catch-up")
+    @MainActor
+    func capturePathsAreKnownWhileRecording() async throws {
+        let fix = try makeFixture()
+        defer { fix.cleanup() }
+        #expect(fix.controller.capturePaths == nil)
+
+        await fix.controller.start()
+        let meetingID = try #require(fix.controller.state.meetingID)
+        let paths = try #require(fix.controller.capturePaths)
+        let folder = fix.storageRoot.appendingPathComponent(meetingID.uuidString)
+        #expect(paths.micAAC == folder.appendingPathComponent("mic.aac"))
+        #expect(paths.systemAAC == folder.appendingPathComponent("system.aac"))
+
+        _ = await fix.controller.stop()
+        #expect(fix.controller.capturePaths == nil)
     }
 
     @Test("Start with an explicit title uses it for the created meeting")
@@ -702,5 +746,18 @@ struct RecordingStateRecoveryTests {
             .appendingPathComponent(meetingID.uuidString)
             .appendingPathComponent(RecordingController.markerFileName)
         #expect(FileManager.default.fileExists(atPath: markerURL.path))
+    }
+}
+
+/// Counts observation changes, from any thread.
+private final class ChangeCount: Sendable {
+    private let value = Mutex(0)
+
+    var total: Int {
+        value.withLock { $0 }
+    }
+
+    func add() {
+        value.withLock { $0 += 1 }
     }
 }

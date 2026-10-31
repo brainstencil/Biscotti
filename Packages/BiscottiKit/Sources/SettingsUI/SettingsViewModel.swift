@@ -503,6 +503,44 @@ public extension SettingsViewModel {
         return LLMModelCatalog.model(id: id)?.displayName
     }
 
+    /// "Keep the AI model ready", chat's setting. Off by default.
+    var keepModelReady: Bool {
+        core.keepsChatModelReady
+    }
+
+    /// The "Keep the AI model ready" footnote: what it does and the active
+    /// model's memory cost, from its file size, and on Macs that free the
+    /// model during recordings, that they still do.
+    var keepModelReadyFootnote: String {
+        var text = "Loads the AI model at launch and keeps it loaded, so chat answers sooner."
+        if let bytes = activeModelBytes {
+            text += " " + Self.memoryCostText(bytes: bytes)
+        }
+        if core.closesChatModelDuringRecordings {
+            text += " During recordings, it still closes after each answer to free memory."
+        }
+        return text
+    }
+
+    /// "Uses about 7 GB of memory while Biscotti is open", in whole SI
+    /// gigabytes as the model downloads are, at least 1.
+    static func memoryCostText(bytes: Int64) -> String {
+        let gigabytes = max(1, Int((Double(bytes) / 1_000_000_000).rounded()))
+        return "Uses about \(gigabytes) GB of memory while Biscotti is open."
+    }
+
+    /// The active model file's size on disk, or the catalog's download size
+    /// when the file cannot be read.
+    private var activeModelBytes: Int64? {
+        guard let id = core.modelManager.activeModelID else { return nil }
+        if let url = core.modelManager.activeModelURL(),
+           let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+        {
+            return size.int64Value
+        }
+        return LLMModelCatalog.model(id: id)?.approxDownloadBytes
+    }
+
     /// Permission states for each kind.
     var microphoneState: PermissionState {
         core.permissions.microphone
@@ -719,6 +757,12 @@ public extension SettingsViewModel {
         } catch {
             aiAnalysisEnabled = !enabled
         }
+    }
+
+    /// Turns "Keep the AI model ready" on, which loads the model now, or off,
+    /// which lets it close after the usual idle time.
+    func setKeepModelReady(_ isOn: Bool) async {
+        await core.setKeepsChatModelReady(isOn)
     }
 
     /// Loads the effective summary prompt (custom if set, else factory default).

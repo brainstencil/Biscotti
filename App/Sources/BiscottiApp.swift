@@ -111,6 +111,7 @@ struct BiscottiApp: App {
             }
 
             LiveTranscriptCommands(model: appDelegate.liveCommandModel)
+            MeetingChatCommands(model: appDelegate.chatCommandModel)
         }
 
         // Menu bar extra (native menu style)
@@ -279,6 +280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate,
     /// View > Show / Hide Live Transcript; gets the core in `buildCore()`.
     let liveCommandModel = LiveCommandModel()
 
+    /// View > Ask About This Meeting; gets the core in `buildCore()`.
+    let chatCommandModel = ChatCommandModel()
+
     /// A URL that arrived via `application(_:open:)` before the core
     /// finished launching. Only the most recent one is kept (last wins).
     private var pendingLaunchURL: URL?
@@ -427,8 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate,
 
             core = appCore
             notificationService = appCore.notifications
-            liveCommandModel.core = appCore
-            liveCommandModel.showMainWindow = { [weak self] in self?.showMainWindow() }
+            connectCommandModels(to: appCore)
 
             launchState.shellViewModel = AppShellViewModel(core: appCore)
             launchState.shellViewModel?.onLaunchCompletion = { [weak self] in
@@ -723,5 +726,19 @@ private struct WindowTitleHider: NSViewRepresentable {
             window?.titleVisibility = .hidden
             window?.title = ""
         }
+    }
+}
+
+// MARK: - Menu command models
+
+/// In an extension to keep the AppDelegate body within the lint limits.
+extension AppDelegate {
+    /// Gives the View menu's command models the core and a way to show the window.
+    @MainActor
+    func connectCommandModels(to appCore: AppCore) {
+        liveCommandModel.core = appCore
+        liveCommandModel.showMainWindow = { [weak self] in self?.showMainWindow() }
+        chatCommandModel.core = appCore
+        chatCommandModel.showMainWindow = { [weak self] in self?.showMainWindow() }
     }
 }

@@ -1,0 +1,171 @@
+{
+  "run": "baseline",
+  "plan": {
+    "name": "baseline",
+    "mode": "concurrent",
+    "closeModelAfterAnswer": "-",
+    "startAfter": "recordingStart",
+    "delay": "0.0",
+    "interval": "0.0",
+    "questions": "0",
+    "model": "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+    "record": "10.0+900.0",
+    "live": "on"
+  },
+  "range": {
+    "first": "2026-10-28T14:56:45-07:00",
+    "last": "2026-10-28T15:19:08-07:00"
+  },
+  "questions": {
+    "planned": 0,
+    "asked": 0,
+    "skipped": [],
+    "notSent": []
+  },
+  "answers": [],
+  "recording": {
+    "started": true,
+    "stopped": true
+  },
+  "memory": {
+    "footprint": {
+      "app": {
+        "peakMiB": 177.1,
+        "medianMiB": 116.1
+      },
+      "transcriber": {
+        "peakMiB": 126.4,
+        "medianMiB": 93.6
+      },
+      "llm": {
+        "peakMiB": null,
+        "medianMiB": null
+      },
+      "sum": {
+        "peakMiB": 274.0,
+        "medianMiB": 221.0
+      }
+    },
+    "resident": {
+      "app": {
+        "peakMiB": 281.3,
+        "medianMiB": 217.6
+      },
+      "transcriber": {
+        "peakMiB": 166.8,
+        "medianMiB": 104.2
+      },
+      "llm": {
+        "peakMiB": null,
+        "medianMiB": null
+      },
+      "sum": {
+        "peakMiB": 393.3,
+        "medianMiB": 356.9
+      }
+    },
+    "decision": {
+      "peakMiB": 274.0,
+      "medianMiB": 221.0
+    },
+    "samples": 848
+  },
+  "memoryAfterStop": {
+    "decision": {
+      "peakMiB": 614.9,
+      "medianMiB": 608.1
+    },
+    "samples": 53
+  },
+  "memoryBudgets": [
+    {
+      "mac": "8 GB",
+      "budgetGB": 3,
+      "model": "E2B",
+      "appliesToThisRun": null,
+      "fits": true
+    },
+    {
+      "mac": "16 GB",
+      "budgetGB": 11,
+      "model": "E2B",
+      "appliesToThisRun": null,
+      "fits": true
+    },
+    {
+      "mac": "24 GB",
+      "budgetGB": 19,
+      "model": "12B",
+      "appliesToThisRun": null,
+      "fits": true
+    }
+  ],
+  "liveDelaySeconds": {
+    "drawn": {
+      "inside": {
+        "median": null,
+        "p95": null,
+        "count": 0
+      },
+      "outside": {
+        "median": 1.3345,
+        "p95": 2.605,
+        "count": 2022
+      }
+    },
+    "update": {
+      "inside": {
+        "median": null,
+        "p95": null,
+        "count": 0
+      },
+      "outside": {
+        "median": 0.849,
+        "p95": 2.186,
+        "count": 7185
+      }
+    }
+  },
+  "liveChunksDropped": {},
+  "longestDecodeMs": {
+    "inside": null,
+    "outside": 4764.0
+  },
+  "watchdogResets": 0,
+  "watchdogResetTimes": [],
+  "engineRestarts": 0,
+  "engineFailures": 0,
+  "catchUpSeconds": {
+    "median": null,
+    "perAnswer": []
+  },
+  "timeToFirstTokenSeconds": {
+    "cold": [],
+    "warm": []
+  },
+  "tokensPerSecond": {
+    "median": null
+  },
+  "citations": {
+    "cited": 0,
+    "linked": 0,
+    "validity": null
+  },
+  "outcomes": {
+    "failed": 0,
+    "partial": 0
+  },
+  "model": {
+    "loadsDuringRecording": 0,
+    "loadsOutsideRecording": 0,
+    "files": [],
+    "closes": {}
+  },
+  "warnings": [],
+  "contention": {
+    "passes": null,
+    "reasons": [
+      "no answers"
+    ]
+  }
+}

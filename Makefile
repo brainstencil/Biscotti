@@ -96,6 +96,7 @@ test-ai: ## NON-GATING: heavy AI/model tests (downloads GBs; not in CI)
 	BISCOTTI_RUN_AI_TESTS=1 swift test --package-path Packages/Transcription
 	BISCOTTI_RUN_AI_TESTS=1 swift test --package-path Packages/LocalLLM
 	BISCOTTI_RUN_AI_TESTS=1 swift test --package-path Packages/BiscottiKit --filter IntelligenceAITests
+	BISCOTTI_RUN_AI_TESTS=1 swift test --package-path Packages/BiscottiKit --filter MeetingChatAITests
 
 bench: ## NON-GATING: FTS5 search benchmarks (SLOW ~12 min; prints report)
 	BISCOTTI_RUN_BENCH=1 swift test --no-parallel --package-path Packages/BiscottiKit --filter "SearchBenchmark"

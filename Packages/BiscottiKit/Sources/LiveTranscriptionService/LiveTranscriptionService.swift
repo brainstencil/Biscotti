@@ -53,7 +53,9 @@ public final class LiveTranscriptionService {
     /// (`rowsDrawn()`), for the latency signposts.
     public private(set) var rowsRevision = 0
     public private(set) var gaps: [LiveGap] = []
-    /// Set when live transcription started mid-recording.
+    /// Where the live transcript starts, when that is not 0:00: a start
+    /// mid-recording without the recording's files. A start mid-recording
+    /// with them catches up from 0:00 and has none.
     public private(set) var startMarker: TimeInterval?
     public private(set) var language: LiveLanguage
     public private(set) var detectedLanguageName: String?
@@ -103,6 +105,7 @@ public final class LiveTranscriptionService {
     private struct ActiveRecording {
         let meetingID: UUID
         let source: any LiveAudioSource
+        let files: LiveRecordingFiles?
         let timelineOffset: TimeInterval
         let startedAt: Date
 
@@ -187,12 +190,16 @@ public final class LiveTranscriptionService {
     /// - Parameters:
     ///   - tap: The recording's live tap, attached whether or not live
     ///     transcription is on, so turning it on mid-recording can start.
+    ///   - files: The recording's track files. Live transcription turned on
+    ///     mid-recording reads them to catch up from 0:00; without them it
+    ///     starts from that moment, with a start marker.
     ///   - timelineOffset: `RecordingState.timelineOffset`.
     ///   - recordingStartedAt: When capture started, to place a start
     ///     mid-recording on the timeline.
     public func start(
         meetingID: UUID,
         tap: any LiveAudioSource,
+        files: LiveRecordingFiles? = nil,
         timelineOffset: TimeInterval,
         recordingStartedAt: Date = Date()
     ) async {
@@ -200,13 +207,13 @@ public final class LiveTranscriptionService {
         // meanwhile finds it and no session starts after it.
         let earlier = current
         current = nil
-        recording = ActiveRecording(meetingID: meetingID, source: tap, timelineOffset: timelineOffset, startedAt: recordingStartedAt)
+        recording = ActiveRecording(meetingID: meetingID, source: tap, files: files, timelineOffset: timelineOffset, startedAt: recordingStartedAt)
         resetLiveState()
         language = Self.defaultLanguage(macLanguageCode: macLanguageCode)
         await cancelFinishingSessions()
         await earlier?.cancel()
         guard isEnabled, recording?.meetingID == meetingID else { return }
-        await startSession(from: 0, marker: nil)
+        await startSession(.withRecording)
     }
 
     /// The recording stopped. Publishes the meeting's draft at once and
@@ -229,24 +236,26 @@ public final class LiveTranscriptionService {
         writeDraft(from: session)
         finishing[meetingID] = session
         return Task { @MainActor [weak self] in
+            let startedAt = ContinuousClock.now
             let result = await session.finish()
+            let seconds = (ContinuousClock.now - startedAt) / .seconds(1)
             guard let self else { return result }
             if finishing[meetingID] === session { finishing[meetingID] = nil }
             writeDraft(from: session)
-            Self.log.notice("Live finish after Stop: \(String(describing: result), privacy: .public)")
+            Self.log.notice("Live finish after Stop: \(String(describing: result), privacy: .public) in \(seconds, format: .fixed(precision: 2), privacy: .public) s")
             return result
         }
     }
 
-    /// From Settings. During a recording, off ends live transcription and
-    /// clears its state; on starts it from now, with a start marker.
+    /// From Settings and chat's Turn On. During a recording, off ends live
+    /// transcription and clears its state; on starts it and catches up from
+    /// the start of the recording.
     public func setEnabled(_ enabled: Bool) async {
         guard enabled != isEnabled else { return }
         isEnabled = enabled
         guard let recording else { return }
         if enabled {
-            let now = recording.now
-            await startSession(from: now, marker: now)
+            await startSession(.midRecording(recording.now))
         } else {
             let session = current
             current = nil
@@ -271,50 +280,13 @@ public final class LiveTranscriptionService {
         if let current {
             await current.switchLanguage(to: language)
         } else if let recording, isEnabled, status == .unavailable(.languageUnsupported) {
-            let now = recording.now
-            await startSession(from: now, marker: now)
+            // The unsupported language cleared the live text, so the new
+            // session catches up from 0:00 like any start mid-recording.
+            await startSession(.midRecording(recording.now))
         }
     }
 
     // MARK: - Private
-
-    private func startSession(from startTime: TimeInterval, marker: TimeInterval?) async {
-        guard let recording else { return }
-        guard model.isPresent() else {
-            modelState = .missing
-            status = .unavailable(.modelMissing)
-            return
-        }
-        guard language.isSupportedByWhisper else {
-            status = .unavailable(.languageUnsupported)
-            return
-        }
-        let words = await vocabulary(recording.meetingID)
-        // The recording may have stopped, or the setting changed, meanwhile.
-        guard self.recording?.meetingID == recording.meetingID, isEnabled, current == nil else { return }
-        let session = LiveRecordingSession(setup: LiveSessionSetup(
-            meetingID: recording.meetingID,
-            source: recording.source,
-            makeEngine: makeEngine,
-            vocabulary: words,
-            language: language,
-            startTime: startTime,
-            timing: timing,
-            power: power?.decision ?? PowerPolicy.Decision(PowerState()),
-            onSettledTextViolation: onSettledTextViolation,
-            resetWorker: { [weak self] in await self?.onWorkerNeedsReset?() }
-        ))
-        session.onChange = { [weak self] in self?.sessionDidChange($0) }
-        session.onLevel = { [weak self, weak session] level in
-            guard let self, let session, session === current else { return }
-            self.level = level
-        }
-        current = session
-        startMarker = marker
-        status = .starting
-        Self.log.notice("Live transcription starting\(marker == nil ? "" : " mid-recording", privacy: .public)")
-        session.begin()
-    }
 
     private func sessionDidChange(_ session: LiveRecordingSession) {
         if session === current {
@@ -359,11 +331,80 @@ public final class LiveTranscriptionService {
     }
 }
 
+// MARK: - Starting a session
+
+extension LiveTranscriptionService {
+    /// Where a session starts on the recording's timeline.
+    private enum SessionStart {
+        /// With the recording, from 0:00: the tap still holds the first seconds.
+        case withRecording
+        /// Mid-recording, taking the tap's audio from `time` on, with no live
+        /// text before it. The audio before `time` is read from the
+        /// recording's files, so the transcript starts at 0:00; without the
+        /// files it starts at `time`, with a start marker.
+        case midRecording(TimeInterval)
+    }
+
+    private func startSession(_ start: SessionStart) async {
+        guard let recording else { return }
+        let startTime: TimeInterval
+        let earlierAudio: LiveRecordingFiles?
+        let marker: TimeInterval?
+        switch start {
+        case .withRecording:
+            (startTime, earlierAudio, marker) = (0, nil, nil)
+        case let .midRecording(time):
+            earlierAudio = recording.files
+            (startTime, marker) = (time, earlierAudio == nil ? time : nil)
+        }
+        guard model.isPresent() else {
+            modelState = .missing
+            status = .unavailable(.modelMissing)
+            return
+        }
+        guard language.isSupportedByWhisper else {
+            status = .unavailable(.languageUnsupported)
+            return
+        }
+        let words = await vocabulary(recording.meetingID)
+        // The recording may have stopped, or the setting changed, meanwhile.
+        guard self.recording?.meetingID == recording.meetingID, isEnabled, current == nil else { return }
+        let session = LiveRecordingSession(setup: LiveSessionSetup(
+            meetingID: recording.meetingID,
+            source: recording.source,
+            makeEngine: makeEngine,
+            vocabulary: words,
+            language: language,
+            startTime: startTime,
+            earlierAudio: earlierAudio,
+            timing: timing,
+            power: power?.decision ?? PowerPolicy.Decision(PowerState()),
+            onSettledTextViolation: onSettledTextViolation,
+            resetWorker: { [weak self] in await self?.onWorkerNeedsReset?() }
+        ))
+        session.onChange = { [weak self] in self?.sessionDidChange($0) }
+        session.onLevel = { [weak self, weak session] level in
+            guard let self, let session, session === current else { return }
+            self.level = level
+        }
+        current = session
+        startMarker = marker
+        status = .starting
+        let when = switch start {
+        case .withRecording: ""
+        case .midRecording: earlierAudio == nil ? " mid-recording" : " mid-recording, catching up from 0:00"
+        }
+        Self.log.notice("Live transcription starting\(when, privacy: .public)")
+        session.begin()
+    }
+}
+
 // MARK: - Model
 
 extension LiveTranscriptionService {
     /// Downloads the live model. During a recording with live transcription
-    /// on, live transcription starts from the moment it is on disk.
+    /// on, live transcription starts once it is on disk and catches up from
+    /// the start of the recording.
     ///
     /// Onboarding, the drawer's "model needed" state and Settings call it.
     ///
@@ -400,8 +441,7 @@ extension LiveTranscriptionService {
         guard modelState == .ready, let recording, isEnabled, status == .unavailable(.modelMissing) else { return }
         // A session whose engine found no model has ended; a new one takes over.
         if current?.unavailableReason == .modelMissing { current = nil }
-        let now = recording.now
-        await startSession(from: now, marker: now)
+        await startSession(.midRecording(recording.now))
     }
 }
 

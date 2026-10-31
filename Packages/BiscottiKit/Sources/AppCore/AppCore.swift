@@ -7,6 +7,7 @@ import Intelligence
 import LiveTranscriptionService
 import MCPServer
 import MeetingCatalog
+import MeetingChat
 import MeetingDetection
 import Notifications
 import os
@@ -304,6 +305,10 @@ public final class AppCore {
     /// Model state owner (selection, downloads, suitability).
     public let modelManager: ModelManager
 
+    /// The one connection to the local model, lent to `intelligence` and to
+    /// chat so the model is never loaded twice.
+    public let llmBroker: LLMBroker
+
     /// Checks for newer releases on GitHub.
     public let updateChecker: UpdateChecker
 
@@ -313,6 +318,9 @@ public final class AppCore {
 
     /// Injectable environment for the send-to-app feature (Obsidian, Bear, Notes).
     public let sendEnvironment: SendEnvironment
+
+    /// Questions about meetings, answered by the local model through `llmBroker`.
+    public let chat: MeetingChatService
 
     // MARK: - Private
 
@@ -380,6 +388,14 @@ public final class AppCore {
     /// `.task` modifier) while the same AppCore instance persists.
     private var hasLaunched = false
 
+    #if DEBUG
+        /// Whether `onLaunch()` has returned, and the callers of
+        /// `waitUntilLaunched()` until then. Debug builds only: the chat
+        /// load driver (`chatLoadControls`).
+        @ObservationIgnored private var hasFinishedLaunch = false
+        @ObservationIgnored private var launchWaiters: [CheckedContinuation<Void, Never>] = []
+    #endif
+
     private let logger = Logger(subsystem: "net.scosman.biscotti", category: "AppCore")
     private let detectionLogger = Logger(subsystem: "net.scosman.biscotti", category: "Detection")
 
@@ -387,6 +403,11 @@ public final class AppCore {
 
     /// Creates an `AppCore` from pre-built services (used by tests and the
     /// `live` factory).
+    ///
+    /// - Parameter chatDefaults: Where the chat service AppCore builds, when
+    ///   `chat` is nil, keeps each meeting's open thread and draft across
+    ///   launches. The `live` factory passes `.standard`; nil keeps them while
+    ///   the app runs only.
     public init(
         store: DataStore,
         permissions: Permissions,
@@ -397,12 +418,16 @@ public final class AppCore {
         notifications: NotificationService,
         intelligence: Intelligence,
         modelManager: ModelManager,
+        llmBroker: LLMBroker,
         scheduler: any AppScheduler = LiveAppScheduler(),
         updateChecker: UpdateChecker? = nil,
         mcpServer: MCPServerController? = nil,
         liveTranscription: LiveTranscriptionService? = nil,
-        sendEnvironment: SendEnvironment = .live
+        sendEnvironment: SendEnvironment = .live,
+        chat: MeetingChatService? = nil,
+        chatDefaults: UserDefaults? = nil
     ) {
+        let liveTranscription = liveTranscription ?? .inert()
         self.store = store
         self.permissions = permissions
         self.recording = recording
@@ -412,13 +437,19 @@ public final class AppCore {
         self.notifications = notifications
         self.intelligence = intelligence
         self.modelManager = modelManager
+        self.llmBroker = llmBroker
         self.scheduler = scheduler
         self.updateChecker = updateChecker ?? UpdateChecker()
         self.mcpServer = mcpServer ?? MCPServerController(store: store)
-        self.liveTranscription = liveTranscription ?? .inert()
+        self.liveTranscription = liveTranscription
         self.sendEnvironment = sendEnvironment
+        self.chat = chat ?? MeetingChatService(
+            store: store, broker: llmBroker, modelManager: modelManager, live: liveTranscription,
+            recording: recording, transcription: transcription, defaults: chatDefaults
+        )
         prepareModelsAfterLiveModelDownloads()
         resetWorkerWhenLiveFindsItStuck()
+        connectChat()
     }
 
     // MARK: - Lifecycle
@@ -434,6 +465,9 @@ public final class AppCore {
             return
         }
         hasLaunched = true
+        #if DEBUG
+            defer { finishLaunchWait() }
+        #endif
         logger.info("onLaunch: enter")
 
         logger.info("onLaunch: recoverOrphans starting")
@@ -478,6 +512,7 @@ public final class AppCore {
         logger.info("onLaunch: reloadSummaries starting")
         await reloadSummaries()
         await prepareModelsInBackground()
+        startChatModelReadiness()
         logger.info("onLaunch: done")
     }
 
@@ -588,6 +623,9 @@ public final class AppCore {
         }
 
         guard let meetingID = await recording.stop() else { return nil }
+        // In the turn the recording ends: until the pass is queued, chat
+        // reads a meeting with no draft as transcribing, not as transcript-less.
+        chat.finalPassWillStart(meetingID: meetingID)
         // Capture has stopped and closed the live tap. The draft is published
         // now, before the meeting opens; the live engine finishes its last
         // words in the background.
@@ -603,6 +641,11 @@ public final class AppCore {
         await reloadSummaries()
         runState = .idle
         select(meetingID)
+        // The meeting page opens with the chat card closed, its thread still
+        // open, so the field reads "Continue chat". An answer being written,
+        // or waiting for Stop, keeps the card open to show it.
+        let chatState = chat.state(for: meetingID)
+        if !chatState.isAnswering { chatState.isCardOpen = false }
 
         pendingTranscriptionTask = finalPassAfterStop(of: meetingID, liveFinish: liveFinish)
 
@@ -614,31 +657,23 @@ public final class AppCore {
         return meetingID
     }
 
-    /// Toggles recording: stops if currently recording, starts if idle.
-    /// Used by the global hotkey so a single shortcut can both start and
-    /// stop a session.
-    @discardableResult
-    public func toggleRecording() async -> UUID? {
-        if recording.state.isRecording {
-            return await stopRecording()
-        } else {
-            await startRecording()
-            return nil
-        }
-    }
+    // MARK: - Permission refresh
 
-    /// Records a detected event (from a notification action). Starts
-    /// recording, optionally associated with the given calendar event.
-    public func recordDetectedEvent(eventKey: String?) async {
-        await startRecording(eventKey: eventKey)
-    }
+    // (refreshAllPermissions lives in an extension below to keep the class
+    // body within the type_body_length lint limit.)
+}
 
-    // MARK: - Navigation
+// MARK: - Navigation
 
+// Extracted to an extension to keep the main class body within the
+// type_body_length lint limit after adding the debug launch wait's stored
+// properties (which must live in the class body for @Observable).
+
+public extension AppCore {
     /// Opens a specific meeting from OUTSIDE the list (menu bar, Home recent,
     /// stopRecording, "open this meeting"). Clears any active search, sets
     /// a single-element selection, and routes to the Meetings screen.
-    public func select(_ meetingID: UUID) {
+    func select(_ meetingID: UUID) {
         cancelMeetingsSearch()
         meetingsQuery = ""
         meetingsResults = []
@@ -649,13 +684,13 @@ public final class AppCore {
     /// Set selection from WITHIN the list (`List(selection:)` setter).
     /// Preserves the current mode (keeps the query if searching).
     /// Empty set = placeholder (no selection).
-    public func selectFromList(_ ids: Set<UUID>) {
+    func selectFromList(_ ids: Set<UUID>) {
         meetingsSelection = ids
     }
 
     /// "Past Meetings" (sidebar) and "See all" (Home): browse mode,
     /// KEEP selection (D4).
-    public func showMeetings() {
+    func showMeetings() {
         cancelMeetingsSearch()
         meetingsQuery = ""
         meetingsResults = []
@@ -663,16 +698,55 @@ public final class AppCore {
     }
 
     /// Routes to the recording screen (sidebar recording indicator tap).
-    public func navigateToRecording() {
+    func navigateToRecording() {
         guard recording.state.isRecording else { return }
         route = .recording
     }
-
-    // MARK: - Permission refresh
-
-    // (refreshAllPermissions lives in an extension below to keep the class
-    // body within the type_body_length lint limit.)
 }
+
+// MARK: - Recording shortcuts
+
+/// In an extension to keep the class body within the type_body_length lint limit.
+public extension AppCore {
+    /// Toggles recording: stops if currently recording, starts if idle.
+    /// Used by the global hotkey so a single shortcut can both start and
+    /// stop a session.
+    @discardableResult
+    func toggleRecording() async -> UUID? {
+        if recording.state.isRecording {
+            return await stopRecording()
+        } else {
+            await startRecording()
+            return nil
+        }
+    }
+
+    /// Records a detected event (from a notification action). Starts
+    /// recording, optionally associated with the given calendar event.
+    func recordDetectedEvent(eventKey: String?) async {
+        await startRecording(eventKey: eventKey)
+    }
+}
+
+// MARK: - Launch wait (debug builds)
+
+#if DEBUG
+    extension AppCore {
+        /// Returns once `onLaunch()` has: the stored settings are applied and
+        /// the model selection resolved. Debug builds only: the chat load
+        /// driver waits for it (`chatLoadControls`).
+        func waitUntilLaunched() async {
+            guard !hasFinishedLaunch else { return }
+            await withCheckedContinuation { launchWaiters.append($0) }
+        }
+
+        fileprivate func finishLaunchWait() {
+            hasFinishedLaunch = true
+            launchWaiters.forEach { $0.resume() }
+            launchWaiters = []
+        }
+    }
+#endif
 
 // MARK: - Onboarding
 
@@ -695,6 +769,7 @@ public extension AppCore {
         await startBackgroundServices()
         await reloadSummaries()
         await prepareModelsInBackground()
+        startChatModelReadiness()
     }
 }
 
@@ -835,7 +910,10 @@ extension AppCore {
         if liveTranscription.isFinishing(meetingID) {
             transcription.recordingIsEnding(meetingID)
         }
-        return Task { @MainActor [transcription, intelligence, liveTranscription] in
+        return Task { @MainActor [transcription, intelligence, liveTranscription, chat] in
+            // A question that waited for the recording to stop is answered
+            // from the draft, beside the final pass (a different model).
+            await chat.recordingDidStop(meetingID: meetingID)
             // The live session holds the worker until it finishes, at most
             // for the stop deadline. A finish that ran out of time may have
             // left the worker stuck in a decode; once the queue closes its
@@ -846,7 +924,10 @@ extension AppCore {
             // Releases the final-pass queue. If another recording has started
             // meanwhile, the stop is ignored and this pass waits in the queue.
             transcription.recordingDidStop(meetingID)
+            // A saved transcript reaches chat from inside the pass
+            // (`onTranscriptSaved`), before the draft it used goes below.
             await transcription.transcribe(meetingID: meetingID)
+            chat.finalPassDidEnd(meetingID: meetingID)
             // A failed pass keeps the draft, so the live text stays readable.
             if transcription.jobs[meetingID] == .completed {
                 liveTranscription.releaseDraft(for: meetingID)
@@ -899,6 +980,9 @@ extension AppCore {
         recordingStartup = .started
         pendingStartupEventKey = nil
         pendingStartupTitle = nil
+        // On Macs that free the AI model during recordings, a model kept
+        // loaded by an earlier summary or answer is closed now.
+        await chat.recordingDidStart()
 
         // Associate with the calendar event if resolved
         if let resolvedEvent {
@@ -932,6 +1016,7 @@ extension AppCore {
         await liveTranscription.start(
             meetingID: meetingID,
             tap: liveTap,
+            files: recording.capturePaths.map { LiveRecordingFiles(mic: $0.micAAC, system: $0.systemAAC) },
             timelineOffset: recording.state.timelineOffset ?? 0,
             recordingStartedAt: recording.state.startDate ?? Date()
         )
@@ -2012,6 +2097,10 @@ extension AppCore {
 
         // 2. Delete files best-effort (missing files are fine).
         deleteRecordingFiles(filePaths)
+
+        // Its chat answer, running or waiting, stops without saving and
+        // frees the model, before its thread goes with the row.
+        chat.meetingWasDeleted(meetingID)
 
         // 3. Delete the DB row.
         do {

@@ -25,6 +25,7 @@ public struct TranscriptBubbleList<Header: View>: View {
     private let find: FindState?
     @Binding private var revealTime: TimeInterval?
     @Binding private var anchorTime: TimeInterval?
+    @Binding private var highlight: TranscriptHighlight?
     private let onSeek: (TimeInterval) -> Void
     private let onSpeaker: (Int) -> Void
     private let onSpeakerDebug: ((Int) -> Void)?
@@ -38,6 +39,9 @@ public struct TranscriptBubbleList<Header: View>: View {
     /// Created once, on first use: an initial value here would be built on
     /// every parent re-render (about 4 Hz during playback) and thrown away.
     @State private var state: ListState?
+    /// The scroll to a revealed item whose landing is checked next.
+    @State private var revealCheckToken: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// - Parameters:
     ///   - items: The items to show, from ``TranscriptItemBuilder``.
@@ -48,6 +52,8 @@ public struct TranscriptBubbleList<Header: View>: View {
     ///   - anchorTime: Reports the start time of the topmost visible item, or
     ///     nil while the header is visible. Used to keep the reader's place
     ///     across a draft-to-final swap.
+    ///   - highlight: Highlights the item holding its time until it ends,
+    ///     then fades it back and sets it to nil.
     ///   - onSeek: Called with a time when a time or play button is clicked.
     ///   - onSpeaker: Called with a speaker ID when a speaker name is clicked.
     ///   - onSpeakerDebug: Adds the DEBUG "Voiceprint Debug…" menu to speaker names.
@@ -65,6 +71,7 @@ public struct TranscriptBubbleList<Header: View>: View {
         find: FindState? = nil,
         revealTime: Binding<TimeInterval?> = .constant(nil),
         anchorTime: Binding<TimeInterval?> = .constant(nil),
+        highlight: Binding<TranscriptHighlight?> = .constant(nil),
         onSeek: @escaping (TimeInterval) -> Void,
         onSpeaker: @escaping (Int) -> Void,
         onSpeakerDebug: ((Int) -> Void)? = nil,
@@ -80,6 +87,7 @@ public struct TranscriptBubbleList<Header: View>: View {
         self.find = find
         _revealTime = revealTime
         _anchorTime = anchorTime
+        _highlight = highlight
         self.onSeek = onSeek
         self.onSpeaker = onSpeaker
         self.onSpeakerDebug = onSpeakerDebug
@@ -94,6 +102,7 @@ public struct TranscriptBubbleList<Header: View>: View {
     public var body: some View {
         let follower = state?.follower
         let shown = follower?.displayedItems(latest: items) ?? items
+        let highlightedID = Self.highlightedItemID(highlight, in: shown)
         ScrollViewReader { proxy in
             List {
                 if showsHeader {
@@ -113,6 +122,7 @@ public struct TranscriptBubbleList<Header: View>: View {
                         item: item,
                         highlights: find?.highlights(for: item.id) ?? .none,
                         canSeek: canSeek,
+                        isHighlighted: item.id == highlightedID,
                         onSeek: onSeek,
                         onSpeaker: onSpeaker,
                         onSpeakerDebug: onSpeakerDebug
@@ -121,7 +131,9 @@ public struct TranscriptBubbleList<Header: View>: View {
                     .padding(.top, Self.topSpacing(for: item))
                     .padding(.bottom, item.id == shown.last?.id ? bottomPadding : 0)
                     .readableRowWidth(padding: rowPadding, maxWidth: maxRowWidth)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                    // In the window, read against the list's own frame below:
+                    // a `List` is not a `ScrollView`, so `.scrollView` is not its space.
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                         listState().tracker.update(id: item.id, startTime: item.startTime, frame: frame)
                         publishAnchor()
                     }
@@ -136,17 +148,24 @@ public struct TranscriptBubbleList<Header: View>: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                listState().tracker.updateList(frame: frame)
+                publishAnchor()
+            }
             .onScrollGeometryChange(for: ScrollSample.self) { geometry in
                 ScrollSample(
                     offsetY: geometry.contentOffset.y,
                     contentHeight: geometry.contentSize.height,
                     containerHeight: geometry.containerSize.height,
-                    insetTop: geometry.contentInsets.top
+                    insetTop: geometry.contentInsets.top,
+                    insetBottom: geometry.contentInsets.bottom
                 )
             } action: { _, sample in
                 let state = listState()
                 state.follower.scrollChanged(sample, latest: items)
-                state.tracker.updateScroll(offsetY: sample.offsetY, insetTop: sample.insetTop)
+                state.tracker.updateScroll(
+                    offsetY: sample.offsetY, insetTop: sample.insetTop, insetBottom: sample.insetBottom, viewportHeight: sample.containerHeight
+                )
                 publishAnchor()
             }
             .overlay(alignment: .bottom) { returnToLive }
@@ -159,12 +178,25 @@ public struct TranscriptBubbleList<Header: View>: View {
                 guard let request else { return }
                 proxy.scrollTo(request.itemID, anchor: request.anchor.unitPoint)
                 follower?.consumeScrollRequest()
+                if request.itemID == follower?.revealToCheck {
+                    revealCheckToken = request.token
+                }
+            }
+            // Once the rows have laid out after a scroll to a revealed item,
+            // where it landed: out of view, the follower asks for it again.
+            .task(id: revealCheckToken) {
+                guard revealCheckToken != nil else { return }
+                try? await Task.sleep(for: RevealLandingCheck.delay)
+                guard !Task.isCancelled, let state, let itemID = state.follower.revealToCheck else { return }
+                state.follower.revealLanded(state.tracker.placement(of: itemID), in: state.tracker.visibleSpan)
             }
             .onChange(of: items) { _, latest in
                 follower?.itemsChanged(latest)
             }
             .onChange(of: follow) { _, mode in
-                state = ListState(mode: mode)
+                // The tracker keeps the list's frame and header, which only
+                // arrive when they change.
+                state = ListState(mode: mode, tracker: state?.tracker ?? VisibleRowTracker())
             }
             .onChange(of: shown) { _, shown in
                 find?.update(items: shown)
@@ -186,6 +218,12 @@ public struct TranscriptBubbleList<Header: View>: View {
             .onChange(of: revealTime) { _, _ in
                 applyReveal()
             }
+            .task(id: highlight) {
+                await fadeHighlight()
+            }
+            // A highlight cut short by the list going (Back to chat, another
+            // tab) would otherwise show again, already over, when it returns.
+            .onDisappear { highlight = nil }
             .task {
                 find?.update(items: shown)
                 // Let the list lay out its rows before scrolling.
@@ -228,6 +266,27 @@ public struct TranscriptBubbleList<Header: View>: View {
         revealTime = nil
     }
 
+    /// Clears the highlight once it has lasted, fading the bubble back.
+    private func fadeHighlight() async {
+        guard let current = highlight else { return }
+        let remaining = current.remaining(at: Date())
+        if remaining > 0 {
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+        }
+        guard highlight == current else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: TranscriptHighlight.fadeDuration)) {
+            highlight = nil
+        }
+    }
+
+    /// The item a highlight falls on: the one ``FollowController`` reveals
+    /// for its time.
+    static func highlightedItemID(_ highlight: TranscriptHighlight?, in items: [TranscriptItem]) -> String? {
+        guard let highlight else { return nil }
+        return FollowController.revealTarget(for: highlight.time, in: items)
+    }
+
     private func publishAnchor() {
         let top = state?.tracker.topVisibleStartTime
         if anchorTime != top { anchorTime = top }
@@ -248,13 +307,15 @@ public struct TranscriptBubbleList<Header: View>: View {
 @MainActor
 final class ListState {
     let follower: FollowController
-    let tracker = VisibleRowTracker()
+    let tracker: VisibleRowTracker
 
     /// Created when the list appears (or its follow mode changes), so the
-    /// list's first layout passes do not stop following.
-    init(mode: FollowMode) {
+    /// list's first layout passes do not stop following. A change of follow
+    /// mode passes the old tracker on.
+    init(mode: FollowMode, tracker: VisibleRowTracker = VisibleRowTracker()) {
         follower = FollowController(mode: mode)
         follower.listAppeared()
+        self.tracker = tracker
     }
 }
 
@@ -266,6 +327,7 @@ public extension TranscriptBubbleList where Header == EmptyView {
         follow: FollowMode,
         find: FindState? = nil,
         revealTime: Binding<TimeInterval?> = .constant(nil),
+        highlight: Binding<TranscriptHighlight?> = .constant(nil),
         onSeek: @escaping (TimeInterval) -> Void = { _ in },
         onSpeaker: @escaping (Int) -> Void = { _ in },
         rowPadding: CGFloat,
@@ -278,6 +340,7 @@ public extension TranscriptBubbleList where Header == EmptyView {
             follow: follow,
             find: find,
             revealTime: revealTime,
+            highlight: highlight,
             onSeek: onSeek,
             onSpeaker: onSpeaker,
             rowPadding: rowPadding,

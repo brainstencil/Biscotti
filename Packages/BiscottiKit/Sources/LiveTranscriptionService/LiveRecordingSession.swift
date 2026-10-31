@@ -22,6 +22,13 @@ public struct LiveTiming: Sendable {
     /// (`LiveWorkerLimits.stuckDecode`). A language change waits this long
     /// on top of its timeout, plus `finishMargin`, before it gives up on the worker.
     public var workerStuckDecode: Duration
+    /// The most audio per track the pump holds while the engine cannot take it.
+    public var pumpBacklog: TimeInterval
+    /// How long a recording file may stay short of the audio a catch-up
+    /// needs before the catch-up gives up on it. The writer's AAC encoder
+    /// keeps the file about 0.1 s behind the tap, and a device switch pauses
+    /// both; a file that stops growing for this long has lost its writer.
+    public var fileStallLimit: Duration
 
     public init(
         publishInterval: Duration = .milliseconds(250),
@@ -29,7 +36,9 @@ public struct LiveTiming: Sendable {
         pumpInterval: Duration = .milliseconds(50),
         finishMargin: Duration = .seconds(1),
         languageSwitchTimeout: Duration = .seconds(3),
-        workerStuckDecode: Duration = LiveWorkerLimits.stuckDecode
+        workerStuckDecode: Duration = LiveWorkerLimits.stuckDecode,
+        pumpBacklog: TimeInterval = LiveAudioLimits.pumpBacklog,
+        fileStallLimit: Duration = .seconds(5)
     ) {
         self.publishInterval = publishInterval
         self.stopDeadline = stopDeadline
@@ -37,6 +46,8 @@ public struct LiveTiming: Sendable {
         self.finishMargin = finishMargin
         self.languageSwitchTimeout = languageSwitchTimeout
         self.workerStuckDecode = workerStuckDecode
+        self.pumpBacklog = pumpBacklog
+        self.fileStallLimit = fileStallLimit
     }
 }
 
@@ -47,8 +58,11 @@ struct LiveSessionSetup {
     let makeEngine: LiveEngineFactory
     let vocabulary: [String]
     var language: LiveLanguage
-    /// Audio before this recording time is not transcribed.
+    /// The tap's audio before this recording time is not taken.
     let startTime: TimeInterval
+    /// For a start mid-recording that catches up from 0:00: the recording's
+    /// files, which give the audio before `startTime`.
+    let earlierAudio: LiveRecordingFiles?
     let timing: LiveTiming
     var power: PowerPolicy.Decision
     let onSettledTextViolation: @Sendable (String) -> Void
@@ -101,8 +115,13 @@ final class LiveRecordingSession {
     private var endingEngine: (any LiveEngineSession)?
     /// The language Detect found, kept for a restarted engine.
     private var lockedLanguage: String?
-    private let pipe = LiveChunkPipe()
+    private let pipe: LiveChunkPipe
     private var pump: LiveAudioPump?
+    /// Reads the audio before `startTime` from the recording's files.
+    private let fileCatchUp: LiveFileCatchUp?
+    /// Tracks whose file read Stop abandoned: their file chunks still in the
+    /// pipe are dropped.
+    private var abandonedCatchUp: Set<LiveTrack> = []
     private var tasks: [Task<Void, Never>] = []
     private var updatesTask: Task<Void, Never>?
     /// The end of the newest chunk each track's engine took.
@@ -158,7 +177,20 @@ final class LiveRecordingSession {
         self.latency = latency
         meetingID = setup.meetingID
         isPaused = setup.power.isPaused
-        store = LiveTranscriptStore(sessionID: sessionID, startTime: setup.startTime, onSettledTextViolation: setup.onSettledTextViolation)
+        let pipe = LiveChunkPipe()
+        self.pipe = pipe
+        fileCatchUp = setup.earlierAudio.map { files in
+            LiveFileCatchUp(
+                files: files,
+                pipe: pipe,
+                liveFrom: setup.startTime,
+                pollInterval: setup.timing.pumpInterval,
+                stallLimit: setup.timing.fileStallLimit
+            )
+        }
+        // A catch-up from the files makes a transcript from 0:00.
+        let transcriptStart = setup.earlierAudio == nil ? setup.startTime : 0
+        store = LiveTranscriptStore(sessionID: sessionID, startTime: transcriptStart, onSettledTextViolation: setup.onSettledTextViolation)
     }
 
     var status: LiveStatus {
@@ -172,11 +204,12 @@ final class LiveRecordingSession {
     /// timeout: the first load in a new build can take minutes.
     ///
     /// The spec starts the pump after the engine. It starts first here: the
-    /// pump keeps up to `LivePumpCore.retention` of audio per track while the
+    /// pump keeps up to `LiveTiming.pumpBacklog` of audio per track while the
     /// engine starts, more than the tap's own queues hold.
     func begin() {
         startForwarders()
         startPump()
+        startFileCatchUp()
         tasks.append(Task { [weak self] in await self?.startEngine() })
     }
 }
@@ -307,7 +340,7 @@ extension LiveRecordingSession {
         // failed engine took but had not settled. The user chose backfill
         // (2026-10-25): that audio goes to the new engine first, and the
         // audio that arrives meanwhile waits in the pipe and the pump, up to
-        // `LivePumpCore.retention`, and follows it.
+        // `LiveTiming.pumpBacklog`, and follows it.
         replayUnsettledAudio()
         await startEngine()
     }
@@ -325,18 +358,41 @@ extension LiveRecordingSession {
     /// Audio no engine took, still waiting in the pump, the pipe or a
     /// replay when the finish ended, is missing from the live transcript.
     /// It was silent when no chunk with sound ends after where it starts.
+    /// A track whose file read was abandoned misses everything from what the
+    /// engine took to the end of its audio, file audio included, whose sound
+    /// is not known.
     private func recordUnforwardedGaps() async {
         // Read before the await, as `recordRestartGaps` did: a chunk handed
         // over meanwhile goes to an engine about to be cancelled.
         let forwarded = lastForwardedEnd
         let extents = await pump?.chunkExtents() ?? [:]
-        for (track, extent) in extents {
+        for track in Set(extents.keys).union(abandonedCatchUp) {
             let from = forwarded[track] ?? store.settledThrough(track)
-            guard extent.end - from > LiveTranscriptStore.gapJoinTolerance else { continue }
-            let isSilent = (extent.voicedEnd ?? -.infinity) <= from + LiveTranscriptStore.gapJoinTolerance
-            store.addGap(LiveGap(track: track, startTime: from, duration: extent.end - from, reason: .queueOverflow, isSilent: isSilent))
+            let readsFile = abandonedCatchUp.contains(track)
+            // The recording reached the session's start before the read began.
+            let end = readsFile
+                ? max(extents[track]?.end ?? from, store.captured[track] ?? from, setup.startTime)
+                : extents[track]?.end ?? from
+            guard end - from > LiveTranscriptStore.gapJoinTolerance else { continue }
+            let isSilent = !readsFile && (extents[track]?.voicedEnd ?? -.infinity) <= from + LiveTranscriptStore.gapJoinTolerance
+            store.addGap(LiveGap(track: track, startTime: from, duration: end - from, reason: .queueOverflow, isSilent: isSilent))
         }
         publishSoon()
+    }
+
+    /// Stop during the file catch-up stops the file reads at once. For tracks
+    /// still reading their file, the pump drops their held audio and the
+    /// forwarders their file audio. What the engine took, and the held audio
+    /// of tracks that reached their live audio, finish under the stop
+    /// deadline as after any Stop.
+    private func abandonFileCatchUp() {
+        guard let fileCatchUp else { return }
+        abandonedCatchUp = fileCatchUp.handoff.abandon()
+        guard !abandonedCatchUp.isEmpty else { return }
+        // A forwarder waiting for progress with a file chunk drops it.
+        resumeProgressWaiters()
+        let names = abandonedCatchUp.map(\.rawValue).sorted().joined(separator: ", ")
+        Self.log.notice("Stop during the live catch-up: \(names, privacy: .public) stop reading the recording files; the rest is not transcribed live")
     }
 
     private func recordRestartGap(on track: LiveTrack) {
@@ -361,7 +417,14 @@ extension LiveRecordingSession {
 
 extension LiveRecordingSession {
     private func startPump() {
-        let pump = LiveAudioPump(source: setup.source, pipe: pipe, discardBefore: setup.startTime, interval: setup.timing.pumpInterval)
+        let pump = LiveAudioPump(
+            source: setup.source,
+            pipe: pipe,
+            discardBefore: setup.startTime,
+            retention: setup.timing.pumpBacklog,
+            handoff: fileCatchUp?.handoff,
+            interval: setup.timing.pumpInterval
+        )
         self.pump = pump
         let events = pump.events
         tasks.append(Task { [weak self] in
@@ -371,6 +434,36 @@ extension LiveRecordingSession {
             self?.pumpEnded.set()
         })
         pump.start()
+    }
+
+    /// One file read per track, off the main actor. Each queues its track's
+    /// audio from 0:00 in the pipe until it reaches the audio the pump holds,
+    /// which then follows.
+    private func startFileCatchUp() {
+        guard let fileCatchUp else { return }
+        let startedAt = ContinuousClock.now
+        for track in pipe.tracks {
+            tasks.append(Task { [weak self] in
+                let outcome = await fileCatchUp.read(track)
+                self?.fileCatchUpEnded(on: track, outcome, after: ContinuousClock.now - startedAt)
+            })
+        }
+    }
+
+    private func fileCatchUpEnded(on track: LiveTrack, _ outcome: LiveFileCatchUp.Outcome, after elapsed: Duration) {
+        let seconds = elapsed / .seconds(1)
+        switch outcome {
+        case let .reachedLive(through):
+            Self.log.notice("The live catch-up read the \(track.rawValue, privacy: .public) file from 0:00 through \(through, format: .fixed(precision: 2), privacy: .public) s in \(seconds, format: .fixed(precision: 1), privacy: .public) s; the live audio follows")
+        case let .gaveUp(gap, reason):
+            Self.log.error("The live catch-up stopped reading the \(track.rawValue, privacy: .public) file after \(seconds, format: .fixed(precision: 1), privacy: .public) s: \(reason, privacy: .public)")
+            if let gap {
+                store.addGap(gap)
+                publishSoon()
+            }
+        case .stopped:
+            break
+        }
     }
 
     private func handle(_ event: LiveAudioPump.Event) {
@@ -454,6 +547,9 @@ extension LiveRecordingSession {
         var chunk = chunk
         var retryDelay = Self.offerRetryDelay
         while let engine = await currentEngine() {
+            // File audio of a catch-up Stop abandoned: it counts as not taken,
+            // so the gap for the rest of the recording covers it.
+            guard isReplay || !abandonedCatchUp.contains(chunk.track) else { return .noEngine }
             guard !engineEndedWhileFinishing else {
                 noteTaken(chunk)
                 return .taken
@@ -475,18 +571,23 @@ extension LiveRecordingSession {
             let taken = await engine.offer(chunk)
             offersInFlight -= 1
             if offersInFlight == 0 { resumeOfferWaiters() }
-            if taken, isPausedNow {
-                pausedThrough[chunk.track] = max(pausedThrough[chunk.track] ?? chunk.endTime, chunk.endTime)
-            }
             if taken {
-                noteTaken(chunk)
-                if !isPausedNow, !isReplay, !chunk.isBackfill { latency.chunkTaken(chunk) }
+                noteDelivered(chunk, whilePaused: isPausedNow, isReplay: isReplay)
                 return .taken
             }
             do { try await Task.sleep(for: retryDelay) } catch { return .noEngine }
             retryDelay = min(retryDelay * 2, Self.maxOfferRetryDelay)
         }
         return .noEngine
+    }
+
+    /// Only live chunks count toward the latency figures.
+    private func noteDelivered(_ chunk: LiveAudioChunk, whilePaused: Bool, isReplay: Bool) {
+        if whilePaused {
+            pausedThrough[chunk.track] = max(pausedThrough[chunk.track] ?? chunk.endTime, chunk.endTime)
+        }
+        noteTaken(chunk)
+        if !whilePaused, !isReplay, !chunk.isBackfill { latency.chunkTaken(chunk) }
     }
 
     /// True when this generation's engine has transcribed the chunk's track
@@ -498,8 +599,10 @@ extension LiveRecordingSession {
         return chunk.endTime <= base + LiveAudioLimits.engineLead
     }
 
+    /// Before the pump reports a track, its audio reaches at least where the
+    /// session starts taking it: file audio read before then is backfill too.
     private func isBackfill(_ chunk: LiveAudioChunk) -> Bool {
-        let captured = store.captured[chunk.track] ?? chunk.endTime
+        let captured = store.captured[chunk.track] ?? max(chunk.endTime, setup.startTime)
         return captured - chunk.endTime > LiveAudioLimits.backfillLag
     }
 
@@ -721,6 +824,7 @@ extension LiveRecordingSession {
     /// engine's last words, all under one deadline. On time-out the tail
     /// keeps what it has, marked incomplete, and the engine is cancelled.
     func finish() async -> LiveFinishResult {
+        abandonFileCatchUp()
         guard phase == .running, engine != nil else {
             // Starting, restarting, switching language or unavailable: no
             // engine will settle the tails the draft keeps, or the audio an
@@ -765,6 +869,8 @@ extension LiveRecordingSession {
             Self.log.error("The live finish ran out of time; the draft keeps what it has")
             store.markTailsIncomplete()
             recordRestartGaps()
+            await recordUnforwardedGaps()
+        } else if !abandonedCatchUp.isEmpty {
             await recordUnforwardedGaps()
         }
         await tearDown()

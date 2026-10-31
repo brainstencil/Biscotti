@@ -66,7 +66,8 @@
                 provider: PreviewNotificationCenter()
             )
 
-            let (modelManager, intelligence) = makeIntelligence(store: store)
+            let llmBroker = LLMBroker(opener: PreviewLLMOpener())
+            let (modelManager, intelligence) = makeIntelligence(store: store, llmBroker: llmBroker)
 
             return AppCore(
                 store: store,
@@ -78,12 +79,13 @@
                 notifications: notifications,
                 intelligence: intelligence,
                 modelManager: modelManager,
+                llmBroker: llmBroker,
                 liveTranscription: liveTranscription
             )
         }
 
         @MainActor
-        private static func makeIntelligence(store: DataStore) -> (ModelManager, Intelligence) {
+        private static func makeIntelligence(store: DataStore, llmBroker: LLMBroker) -> (ModelManager, Intelligence) {
             let modelManager = ModelManager(
                 store: store,
                 models: PreviewModelProvider(),
@@ -91,7 +93,7 @@
             )
             let intelligence = Intelligence(
                 store: store,
-                llm: PreviewLLMRunner(),
+                llm: BrokeredLLMRunner(broker: llmBroker),
                 modelManager: modelManager,
                 settings: { AISettings(enabled: true) }
             )
@@ -232,19 +234,20 @@
         }
     }
 
-    /// No-op LLM runner for previews.
-    private struct PreviewLLMRunner: LLMRunning {
-        func withSession<T: Sendable>(
+    /// Opens no-op sessions for previews.
+    private struct PreviewLLMOpener: LLMConnectionOpening {
+        func open(
             model _: URL,
-            config _: LocalLLM.EngineConfig,
-            _ body: @Sendable (any LLMSession) async throws -> T
-        ) async throws -> T {
-            try await body(PreviewLLMSession())
+            config _: LocalLLM.EngineConfig
+        ) async throws -> any LLMOpenSession {
+            PreviewLLMSession()
         }
     }
 
-    /// No-op LLM session for previews.
-    private struct PreviewLLMSession: LLMSession {
+    /// No-op LLM session for previews: empty replies and streams.
+    private struct PreviewLLMSession: LLMOpenSession {
+        func close() async {}
+
         func countTokens(
             messages _: [LocalLLM.LLMMessage]
         ) async throws -> Int {

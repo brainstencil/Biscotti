@@ -1,0 +1,337 @@
+{
+  "run": "concurrent-12b",
+  "plan": {
+    "name": "concurrent-12b",
+    "mode": "concurrent",
+    "closeModelAfterAnswer": "false",
+    "startAfter": "recordingStart",
+    "delay": "120.0",
+    "interval": "60.0",
+    "questions": "8",
+    "model": "gemma-4-12b-it-UD-Q4_K_XL.gguf",
+    "record": "10.0+900.0",
+    "live": "on"
+  },
+  "range": {
+    "first": "2026-10-28T18:53:46-07:00",
+    "last": "2026-10-28T19:10:06-07:00"
+  },
+  "questions": {
+    "planned": 8,
+    "asked": 8,
+    "skipped": [],
+    "notSent": []
+  },
+  "answers": [
+    {
+      "question": 1,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": true,
+      "timeToFirstTokenSeconds": 17.659142017364502,
+      "tokensPerSecond": 15.242821694434596,
+      "windowSeconds": 19.262646913528442,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 770,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 42,
+      "generatedTokens": 43,
+      "cited": 3,
+      "linked": 3
+    },
+    {
+      "question": 2,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 1.8523199558258057,
+      "tokensPerSecond": 13.841734134238704,
+      "windowSeconds": 3.8513548374176025,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 1104,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 52,
+      "generatedTokens": 53,
+      "cited": 2,
+      "linked": 2
+    },
+    {
+      "question": 3,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 1.9168980121612549,
+      "tokensPerSecond": 17.6678445229682,
+      "windowSeconds": 6.285922050476074,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 1400,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 109,
+      "generatedTokens": 110,
+      "cited": 5,
+      "linked": 5
+    },
+    {
+      "question": 4,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 3.2331161499023438,
+      "tokensPerSecond": 12.701252236135957,
+      "windowSeconds": 8.24219012260437,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 1770,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 70,
+      "generatedTokens": 71,
+      "cited": 4,
+      "linked": 4
+    },
+    {
+      "question": 5,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 3.991518020629883,
+      "tokensPerSecond": 6.856359273225918,
+      "windowSeconds": 5.80282187461853,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 2073,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 19,
+      "generatedTokens": 20,
+      "cited": 1,
+      "linked": 1
+    },
+    {
+      "question": 6,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 5.079008102416992,
+      "tokensPerSecond": 7.863401482812852,
+      "windowSeconds": 7.43160605430603,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 2323,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 34,
+      "generatedTokens": 35,
+      "cited": 0,
+      "linked": 0
+    },
+    {
+      "question": 7,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 5.892350912094116,
+      "tokensPerSecond": 10.045993706124424,
+      "windowSeconds": 19.899152994155884,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 2550,
+      "contextSize": 4096,
+      "partial": false,
+      "tokens": 164,
+      "generatedTokens": 166,
+      "cited": 12,
+      "linked": 12
+    },
+    {
+      "question": 8,
+      "outcome": "complete",
+      "error": null,
+      "done": true,
+      "cold": false,
+      "timeToFirstTokenSeconds": 27.132840871810913,
+      "tokensPerSecond": 3.453485862292251,
+      "windowSeconds": 28.2516131401062,
+      "catchUpSeconds": 0.0,
+      "promptTokens": 2897,
+      "contextSize": 8192,
+      "partial": false,
+      "tokens": 15,
+      "generatedTokens": 16,
+      "cited": 0,
+      "linked": 0
+    }
+  ],
+  "recording": {
+    "started": true,
+    "stopped": true
+  },
+  "memory": {
+    "footprint": {
+      "app": {
+        "peakMiB": 152.8,
+        "medianMiB": 111.7
+      },
+      "transcriber": {
+        "peakMiB": 94.1,
+        "medianMiB": 77.0
+      },
+      "llm": {
+        "peakMiB": 2879.9,
+        "medianMiB": 1524.6
+      },
+      "sum": {
+        "peakMiB": 3104.0,
+        "medianMiB": 1709.5
+      }
+    },
+    "resident": {
+      "app": {
+        "peakMiB": 215.6,
+        "medianMiB": 173.0
+      },
+      "transcriber": {
+        "peakMiB": 147.8,
+        "medianMiB": 87.6
+      },
+      "llm": {
+        "peakMiB": 9811.5,
+        "medianMiB": 8456.85
+      },
+      "sum": {
+        "peakMiB": 10070.8,
+        "medianMiB": 8711.6
+      }
+    },
+    "decision": {
+      "peakMiB": 10009.6,
+      "medianMiB": 8639.4
+    },
+    "samples": 825
+  },
+  "memoryAfterStop": {
+    "decision": {
+      "peakMiB": 442.6,
+      "medianMiB": 433.9
+    },
+    "samples": 17
+  },
+  "memoryBudgets": [
+    {
+      "mac": "8 GB",
+      "budgetGB": 3,
+      "model": "E2B",
+      "appliesToThisRun": false,
+      "fits": false
+    },
+    {
+      "mac": "16 GB",
+      "budgetGB": 11,
+      "model": "E2B",
+      "appliesToThisRun": false,
+      "fits": true
+    },
+    {
+      "mac": "24 GB",
+      "budgetGB": 19,
+      "model": "12B",
+      "appliesToThisRun": true,
+      "fits": true
+    }
+  ],
+  "liveDelaySeconds": {
+    "drawn": {
+      "inside": {
+        "median": null,
+        "p95": null,
+        "count": 0
+      },
+      "outside": {
+        "median": 1.179,
+        "p95": 2.146,
+        "count": 449
+      }
+    },
+    "update": {
+      "inside": {
+        "median": 0.858,
+        "p95": 2.188,
+        "count": 793
+      },
+      "outside": {
+        "median": 0.777,
+        "p95": 1.985,
+        "count": 6392
+      }
+    }
+  },
+  "liveChunksDropped": {},
+  "longestDecodeMs": {
+    "inside": 2831.0,
+    "outside": 4324.0
+  },
+  "watchdogResets": 0,
+  "watchdogResetTimes": [],
+  "engineRestarts": 0,
+  "engineFailures": 0,
+  "catchUpSeconds": {
+    "median": 0.0,
+    "perAnswer": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "timeToFirstTokenSeconds": {
+    "cold": [
+      17.659142017364502
+    ],
+    "warm": [
+      1.8523199558258057,
+      1.9168980121612549,
+      3.2331161499023438,
+      3.991518020629883,
+      5.079008102416992,
+      5.892350912094116,
+      27.132840871810913
+    ]
+  },
+  "tokensPerSecond": {
+    "median": 11.37362297113019
+  },
+  "citations": {
+    "cited": 27,
+    "linked": 27,
+    "validity": 1.0
+  },
+  "outcomes": {
+    "failed": 0,
+    "partial": 0
+  },
+  "model": {
+    "loadsDuringRecording": 1,
+    "loadsOutsideRecording": 0,
+    "files": [
+      "gemma-4-12b-it-UD-Q4_K_XL.gguf"
+    ],
+    "closes": {
+      "idle": 1
+    }
+  },
+  "warnings": [],
+  "contention": {
+    "passes": true,
+    "reasons": []
+  }
+}

@@ -23,7 +23,9 @@ private struct LiveFixture {
         macLanguageCode: String = "en",
         stopDeadline: Duration = .seconds(5),
         languageSwitchTimeout: Duration = .seconds(3),
-        workerStuckDecode: Duration = .seconds(10)
+        workerStuckDecode: Duration = .seconds(10),
+        pumpBacklog: TimeInterval = LiveAudioLimits.pumpBacklog,
+        fileStallLimit: Duration = .seconds(5)
     ) {
         engines = FakeLiveEngineFactory(starts: starts, finish: finish)
         model = FakeLiveModel(present: modelPresent)
@@ -41,13 +43,15 @@ private struct LiveFixture {
                 pumpInterval: .milliseconds(5),
                 finishMargin: .milliseconds(100),
                 languageSwitchTimeout: languageSwitchTimeout,
-                workerStuckDecode: workerStuckDecode
+                workerStuckDecode: workerStuckDecode,
+                pumpBacklog: pumpBacklog,
+                fileStallLimit: fileStallLimit
             )
         )
     }
 
-    func start(startedAt: Date = Date(), timelineOffset: TimeInterval = 0) async {
-        await service.start(meetingID: meetingID, tap: tap, timelineOffset: timelineOffset, recordingStartedAt: startedAt)
+    func start(startedAt: Date = Date(), timelineOffset: TimeInterval = 0, files: LiveRecordingFiles? = nil) async {
+        await service.start(meetingID: meetingID, tap: tap, files: files, timelineOffset: timelineOffset, recordingStartedAt: startedAt)
     }
 
     /// The nth engine, once its start has its config.
@@ -332,7 +336,7 @@ struct LiveTranscriptionServiceTests {
 @Suite("LiveTranscriptionService -- settings, power, language and drawer")
 @MainActor
 struct LiveTranscriptionServiceSettingsTests {
-    @Test("Turning live transcription on mid-recording starts from now, with a start marker")
+    @Test("Without the recording's files, turning live transcription on mid-recording starts from now, with a start marker")
     func enablingMidRecordingSetsStartMarker() async throws {
         let fix = LiveFixture(isEnabled: false)
         await fix.start(startedAt: Date().addingTimeInterval(-5), timelineOffset: 0.5)
@@ -468,7 +472,7 @@ struct LiveTranscriptionServiceSettingsTests {
         #expect(full.revision == 1)
     }
 
-    @Test("Downloading the model during a recording starts live transcription from then")
+    @Test("Without the recording's files, downloading the model during a recording starts live transcription from then")
     func downloadThenStartsMidRecording() async throws {
         let fix = LiveFixture(modelPresent: false)
         await fix.start()
@@ -544,7 +548,7 @@ struct LiveTranscriptionServiceBacklogTests {
         #expect(fix.service.gaps.isEmpty)
     }
 
-    @Test("A start mid-recording sends the audio from the marker on, in order, while the engine starts")
+    @Test("A start mid-recording without the recording's files sends the audio from the marker on, in order, while the engine starts")
     func midRecordingStartKeepsTheBacklogInOrder() async throws {
         let fix = LiveFixture(starts: [.hang], isEnabled: false)
         await fix.start(startedAt: Date().addingTimeInterval(-5))
@@ -1006,5 +1010,250 @@ struct LiveTranscriptionServiceModelTests {
         await second.value
         #expect(service.modelState == .ready)
         #expect(model.downloadCount == 1)
+    }
+}
+
+/// The recording's file holds 0.25 throughout; the tap's audio is a tone.
+private let fileValue: Float = 0.25
+
+@Suite("LiveTranscriptionService -- catch-up from the recording files")
+@MainActor
+struct LiveTranscriptionServiceFileCatchUpTests {
+    private func micChunks(of engine: FakeLiveEngine) async -> [LiveAudioChunk] {
+        await engine.offered.filter { $0.track == .mic }
+    }
+
+    /// True for a chunk of the recording's file, which holds `fileValue`
+    /// throughout. A replay hands audio over again from 16-bit samples.
+    private func isFileAudio(_ chunk: LiveAudioChunk) -> Bool {
+        chunk.samples.allSatisfy { abs($0 - fileValue) < 1e-3 }
+    }
+
+    /// A recording that started `seconds` ago with the live transcript off,
+    /// whose file holds `fileSeconds`, and whose tap has delivered a tone
+    /// from `tapFrom` to `tapTo`. The tap reaches well past the moment the
+    /// test turns the live transcript on, however late that comes.
+    private func recordingWithoutLive(
+        for seconds: TimeInterval,
+        tapFrom: TimeInterval,
+        tapTo: TimeInterval? = nil,
+        fileSeconds: TimeInterval? = nil,
+        modelPresent: Bool = true,
+        starts: [FakeLiveEngine.StartBehavior] = [],
+        finish: FakeLiveEngine.FinishBehavior = .returns([]),
+        pumpBacklog: TimeInterval = LiveAudioLimits.pumpBacklog,
+        fileStallLimit: Duration = .seconds(5)
+    ) async -> LiveFixture {
+        let fix = LiveFixture(
+            starts: starts,
+            finish: finish,
+            isEnabled: !modelPresent,
+            modelPresent: modelPresent,
+            pumpBacklog: pumpBacklog,
+            fileStallLimit: fileStallLimit
+        )
+        let file = ScriptedTrackFile(seconds: fileSeconds ?? seconds + 30) { _ in fileValue }
+        await fix.start(startedAt: Date().addingTimeInterval(-seconds), files: file.files)
+        let end = tapTo ?? seconds + 30
+        fix.tap.mic.pushTone(seconds: end - tapFrom, from: tapFrom)
+        return fix
+    }
+
+    @Test("Turned on mid-recording, the live transcript catches up from 0:00: the file's audio reaches the engine first, then the live audio, with no gap and no start marker")
+    func catchesUpFromTheStartThenGoesLive() async throws {
+        // Everything stays within the engine's 36 s lead, so it takes it all.
+        let fix = await recordingWithoutLive(for: 20, tapFrom: 0, tapTo: 34)
+        await fix.service.setEnabled(true)
+        #expect(fix.service.startMarker == nil)
+        let engine = try await fix.engine(0)
+        // The pump keeps its last partial chunk.
+        try await waitUntil("the file's audio and the live audio") { await micChunks(of: engine).last.map { $0.endTime > 33 } ?? false }
+
+        let chunks = await micChunks(of: engine)
+        #expect(chunks.first?.startTime == 0)
+        #expect(isContiguous(chunks))
+        #expect(!chunks.contains { $0.isDiscontinuity })
+        // The join is where the pump first took the tap's audio: when the test
+        // turned the live transcript on, at least 20 s in.
+        let firstLive = try #require(chunks.firstIndex { !isFileAudio($0) })
+        #expect(chunks[firstLive].startTime >= 20)
+        #expect(chunks[..<firstLive].allSatisfy(isFileAudio), "the file's audio comes first")
+        #expect(!chunks[firstLive...].contains(where: isFileAudio), "then the tap's")
+        #expect(chunks.first?.isBackfill == true, "far behind the live audio")
+        #expect(fix.service.gaps.isEmpty)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("While it catches up, the drawer fills in from 0:00 with Catching up and chat's snapshot reaches only as far as the text; after the join it goes Live")
+    func catchUpStateForTheDrawerAndChat() async throws {
+        let fix = await recordingWithoutLive(for: 60, tapFrom: 59.5)
+        await fix.service.setEnabled(true)
+        let engine = try await fix.engine(0)
+        try await waitUntil("the file's first chunks") { await !micChunks(of: engine).isEmpty }
+        let row = LiveRow(track: .mic, startTime: 0.5, endTime: 2, settledText: "Earlier on")
+        await engine.emit(liveUpdate(.mic, rows: [row], transcribedThrough: 2, settledThrough: 2))
+        try await waitUntil("the row") { !fix.service.rows.isEmpty }
+        try await waitUntil("the live audio's progress") { (fix.service.snapshot(includeTail: true)?.captureWatermark ?? 0) > 89 }
+
+        #expect(fix.service.status == .catchingUp)
+        #expect(fix.service.startMarker == nil, "the transcript starts at 0:00")
+        #expect(fix.service.rows == [row])
+        let snapshot = try #require(fix.service.snapshot(includeTail: true))
+        #expect(snapshot.transcribedThrough == 2, "chat's answers say \"through 0:02\"")
+
+        // The engine gets the rest of the file, then the live audio.
+        await engine.emit(liveUpdate(.mic, revision: 2, transcribedThrough: 60, settledThrough: 60))
+        try await waitUntil("the join") { await micChunks(of: engine).last.map { !isFileAudio($0) } ?? false }
+        #expect(fix.service.status == .catchingUp)
+        await engine.emit(liveUpdate(.mic, revision: 3, transcribedThrough: 89.5, settledThrough: 89.5))
+        try await waitUntil("live") { fix.service.status == .live }
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("Once the model is downloaded during a recording, the live transcript catches up from 0:00 too")
+    func modelDownloadCatchesUp() async throws {
+        let fix = await recordingWithoutLive(for: 3, tapFrom: 0, modelPresent: false)
+        #expect(fix.service.status == .unavailable(.modelMissing))
+        await fix.service.downloadModel()
+        #expect(fix.service.startMarker == nil)
+        let engine = try await fix.engine(0)
+        try await waitUntil("a chunk") { await !micChunks(of: engine).isEmpty }
+        #expect(await micChunks(of: engine).first?.startTime == 0)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("Switching back from a language the engine cannot transcribe, which cleared the live text, catches up from 0:00 too")
+    func languageRestartCatchesUp() async throws {
+        let fix = await recordingWithoutLive(for: 5, tapFrom: 0)
+        await fix.service.setEnabled(true)
+        _ = try await fix.engine(0)
+        await fix.service.setLanguage(.locale("tlh"))
+        #expect(fix.service.status == .unavailable(.languageUnsupported))
+        #expect(fix.service.rows.isEmpty)
+        await fix.service.setLanguage(.english)
+        #expect(fix.service.startMarker == nil)
+        let engine = try await fix.engine(1)
+        try await waitUntil("a chunk") { await !micChunks(of: engine).isEmpty }
+        #expect(await micChunks(of: engine).first?.startTime == 0)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("A language change during a catch-up goes on from where the text settled, with no start marker")
+    func languageSwitchDuringCatchUp() async throws {
+        let fix = await recordingWithoutLive(for: 60, tapFrom: 59.5)
+        await fix.service.setEnabled(true)
+        let first = try await fix.engine(0)
+        try await waitUntil("the lead") { await micChunks(of: first).count == Int(LiveAudioLimits.engineLead / 0.25) }
+
+        await fix.service.setLanguage(.detect)
+        let second = try await fix.engine(1)
+        #expect(await second.config?.language == .detect)
+        try await waitUntil("the unsettled file audio") { await micChunks(of: second).count == Int(LiveAudioLimits.engineLead / 0.25) }
+        let chunks = await micChunks(of: second)
+        #expect(chunks.first?.startTime == 0, "nothing had settled")
+        #expect(isContiguous(chunks))
+        #expect(fix.service.startMarker == nil)
+        #expect(fix.service.gaps.isEmpty)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("An engine restarted during a catch-up gets the file's unsettled audio, the rest of the file and then the live audio, in order")
+    func engineRestartDuringCatchUp() async throws {
+        let fix = await recordingWithoutLive(for: 60, tapFrom: 59.5)
+        await fix.service.setEnabled(true)
+        let first = try await fix.engine(0)
+        let settled = LiveRow(track: .mic, startTime: 0, endTime: 2, settledText: "Earlier on")
+        await first.emit(liveUpdate(.mic, rows: [settled], transcribedThrough: 2, settledThrough: 2))
+        let lead = 2 + LiveAudioLimits.engineLead
+        try await waitUntil("the lead") { await micChunks(of: first).last.map { abs($0.endTime - lead) < 1e-6 } ?? false }
+
+        await first.fail()
+        let second = try await fix.engine(1)
+        try await waitUntil("the replay") { await !micChunks(of: second).isEmpty }
+        await second.emit(liveUpdate(.mic, transcribedThrough: 60, settledThrough: 60))
+        try await waitUntil("the join") { await micChunks(of: second).last.map { !isFileAudio($0) } ?? false }
+
+        let chunks = await micChunks(of: second)
+        #expect(chunks.first?.startTime == 2, "from where the text settled")
+        #expect(isContiguous(chunks))
+        #expect(!chunks.contains { $0.isDiscontinuity })
+        let firstLive = try #require(chunks.firstIndex { !isFileAudio($0) })
+        #expect(chunks[firstLive].startTime >= 60)
+        #expect(fix.service.gaps.isEmpty)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("A catch-up longer than the pump's backlog reads on from the file through the live audio the pump dropped meanwhile")
+    func pumpDropsIntoTheFile() async throws {
+        // A 4 s backlog stands in for the 15 minutes; the engine starts only
+        // once the pump has dropped the oldest live audio.
+        let fix = await recordingWithoutLive(for: 10, tapFrom: 10, tapTo: 20, starts: [.hang], pumpBacklog: 4)
+        await fix.service.setEnabled(true)
+        let engine = try await fix.engine(0)
+        try await waitUntil("the pump to take the tap's audio") { (fix.service.snapshot(includeTail: true)?.captureWatermark ?? 0) >= 20 - 1e-9 }
+        await engine.releaseStart()
+        try await waitUntil("the live audio") { await micChunks(of: engine).last.map { $0.endTime > 19.5 } ?? false }
+
+        let chunks = await micChunks(of: engine)
+        #expect(chunks.first?.startTime == 0)
+        #expect(isContiguous(chunks))
+        #expect(!chunks.contains { $0.isDiscontinuity })
+        // The pump kept its newest 4 s; the file gave everything before.
+        let firstLive = try #require(chunks.firstIndex { !isFileAudio($0) })
+        #expect(chunks[firstLive].startTime >= 15.5 && chunks[firstLive].startTime <= 16.5)
+        #expect(fix.service.gaps.isEmpty, "nothing was lost")
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("A file read that gives up partway leaves a gap, and the live audio after it starts a new run in the engine")
+    func giveUpStartsANewRun() async throws {
+        // The file holds 2 s and stops growing.
+        let fix = await recordingWithoutLive(for: 5, tapFrom: 0, fileSeconds: 2, fileStallLimit: .milliseconds(50))
+        await fix.service.setEnabled(true)
+        let engine = try await fix.engine(0)
+        try await waitUntil("the live audio") { await micChunks(of: engine).last.map { !isFileAudio($0) } ?? false }
+
+        let chunks = await micChunks(of: engine)
+        let firstLive = try #require(chunks.firstIndex { !isFileAudio($0) })
+        #expect(isContiguous(Array(chunks[..<firstLive])) && abs(chunks[firstLive - 1].endTime - 2) < 1e-9)
+        let live = chunks[firstLive]
+        #expect(live.isDiscontinuity, "the engine must not join it to the file's last audio")
+        #expect(live.startTime >= 5)
+        #expect(!chunks[(firstLive + 1)...].contains { $0.isDiscontinuity })
+        let gap = try #require(fix.service.gaps.first { $0.track == .mic })
+        #expect(gap.reason == .queueOverflow && abs(gap.startTime - 2) < 1e-9)
+        #expect(gap.endTime >= 5 && gap.endTime <= live.startTime + 1e-6)
+        await fix.service.setEnabled(false)
+    }
+
+    @Test("Stop during a catch-up stops the file reads at once: the engine finishes what it took, and the rest of the recording is not transcribed live")
+    func stopDuringCatchUpDoesNotWait() async throws {
+        let settled = LiveRow(track: .mic, startTime: 0, endTime: 1, settledText: "Hello")
+        let lead = 1 + LiveAudioLimits.engineLead
+        let finals = liveUpdate(.mic, revision: 2, rows: [settled], transcribedThrough: lead, settledThrough: lead)
+        let fix = await recordingWithoutLive(for: 600, tapFrom: 599.5, tapTo: 601, finish: .returns([finals]))
+        await fix.service.setEnabled(true)
+        let engine = try await fix.engine(0)
+        await engine.emit(liveUpdate(.mic, rows: [settled], transcribedThrough: 1, settledThrough: 1))
+        // The engine takes the file's audio up to the lead past what it transcribed.
+        try await waitUntil("the lead") { await micChunks(of: engine).last.map { abs($0.endTime - lead) < 1e-6 } ?? false }
+        try await waitUntil("the live audio's progress") { (fix.service.snapshot(includeTail: true)?.captureWatermark ?? 0) > 600 }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        let finishing = fix.service.stop(fix.meetingID)
+        fix.tap.end(at: 601)
+        #expect(await finishing.value == .finished)
+        // Well inside the 5 s deadline, which a wait for the catch-up would reach.
+        #expect(clock.now - started < .seconds(4))
+        #expect(await engine.finishTimeouts.count == 1, "the engine finished what it took")
+        #expect(await micChunks(of: engine).allSatisfy { $0.endTime <= lead + 1e-6 }, "nothing more was handed over")
+
+        let gaps = try #require(fix.service.draft(for: fix.meetingID)?.gaps)
+        let mic = try #require(gaps.first { $0.track == .mic })
+        #expect(mic.reason == .queueOverflow && !mic.isSilent)
+        #expect(abs(mic.startTime - lead) < 1e-6)
+        #expect(mic.endTime >= 601 - 0.01, "to the end of the recording's audio")
+        #expect(gaps.contains { $0.track == .system && $0.reason == .queueOverflow && $0.endTime > 599 }, "the system file's untaken audio too")
     }
 }

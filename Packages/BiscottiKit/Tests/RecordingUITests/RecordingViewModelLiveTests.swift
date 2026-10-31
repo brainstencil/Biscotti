@@ -232,14 +232,17 @@ struct RecordingViewModelLiveTests {
         await ctx.stop()
     }
 
-    @Test("The drawer takes 45% of the height, within 240 to 520 pt; the notes scroll clear of it")
+    @Test("The drawer takes 45% of the height, within 240 to 520 pt; the notes scroll clear of it, of the chat card and of the field's row")
     func drawerMetrics() {
         #expect(LiveTranscriptOverlay.drawerHeight(forAvailableHeight: 400) == 240)
         #expect(LiveTranscriptOverlay.drawerHeight(forAvailableHeight: 800) == 360)
         #expect(LiveTranscriptOverlay.drawerHeight(forAvailableHeight: 2000) == 520)
-        #expect(LiveTranscriptOverlay.notesBottomInset(showsLive: false, isExpanded: true, drawerHeight: 300) == 0)
-        #expect(LiveTranscriptOverlay.notesBottomInset(showsLive: true, isExpanded: false, drawerHeight: 300) == 60)
-        #expect(LiveTranscriptOverlay.notesBottomInset(showsLive: true, isExpanded: true, drawerHeight: 300) == 316)
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: nil, drawerHeight: 300, rowHeight: 44) == 0)
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: .collapsed, drawerHeight: 300, rowHeight: 44) == 60)
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: .collapsed, drawerHeight: 300, rowHeight: 110) == 126, "a question of several lines")
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: .collapsed, drawerHeight: 300, rowHeight: 40) == 60, "the toggle at least")
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: .transcript, drawerHeight: 300, rowHeight: 110) == 316)
+        #expect(LiveTranscriptOverlay.notesBottomInset(slot: .chat, drawerHeight: 300, rowHeight: 44) == 316, "the chat card takes the drawer's place")
     }
 
     @Test("The drawer spans the window less a 16 pt gutter on each side, at most 880 pt")
@@ -331,5 +334,22 @@ struct RecordingViewModelLiveTests {
         #expect(silent.allSatisfy { $0 >= LevelMeter.minHeight && $0 < 8 })
         #expect(loud.max() == LevelMeter.maxHeight)
         #expect(zip(silent, loud).allSatisfy { $0 < $1 })
+    }
+}
+
+@Suite("RecordingViewModel -- live transcript turned on mid-recording")
+@MainActor
+struct RecordingViewModelLiveCatchUpTests {
+    @Test("Turned on mid-recording, the drawer has no \"Live transcript started at\" line: the transcript catches up from 0:00")
+    func midRecordingStartHasNoStartMarker() async throws {
+        let ctx = try LiveScreenFixture(isEnabled: false)
+        await ctx.fix.core.startRecording()
+        await ctx.live.setEnabled(true)
+
+        #expect(ctx.live.startMarker == nil)
+        #expect(!ctx.viewModel.liveItems.contains { item in
+            if case .startMarker = item.kind { true } else { false }
+        })
+        await ctx.stop()
     }
 }

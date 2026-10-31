@@ -5,20 +5,23 @@ import SwiftUI
 
 /// One row of the bubble list.
 ///
-/// `Equatable` on what it draws (the item, its find highlights and
-/// `canSeek`), never on the closures, so the list wraps each row in
-/// `.equatable()` and an update re-renders only the rows that changed, for
-/// example the one bubble whose tail grew.
+/// `Equatable` on what it draws (the item, its find highlights, `canSeek`
+/// and the chat's highlight), never on the closures, so the list wraps each
+/// row in `.equatable()` and an update re-renders only the rows that
+/// changed, for example the one bubble whose tail grew.
 struct TranscriptItemRow: View, Equatable {
     let item: TranscriptItem
     let highlights: BubbleHighlights
     let canSeek: Bool
+    /// A chat time cited this bubble (`TranscriptHighlight`).
+    var isHighlighted = false
     let onSeek: (TimeInterval) -> Void
     let onSpeaker: (Int) -> Void
     let onSpeakerDebug: ((Int) -> Void)?
 
     nonisolated static func == (lhs: TranscriptItemRow, rhs: TranscriptItemRow) -> Bool {
         lhs.item == rhs.item && lhs.highlights == rhs.highlights && lhs.canSeek == rhs.canSeek
+            && lhs.isHighlighted == rhs.isHighlighted
     }
 
     var body: some View {
@@ -28,6 +31,7 @@ struct TranscriptItemRow: View, Equatable {
                 bubble: bubble,
                 highlights: highlights,
                 canSeek: canSeek,
+                isHighlighted: isHighlighted,
                 onSeek: onSeek,
                 onSpeaker: onSpeaker,
                 onSpeakerDebug: onSpeakerDebug
@@ -66,9 +70,13 @@ struct TranscriptItemRow: View, Equatable {
 // MARK: - Bubble row
 
 private struct BubbleRow: View {
+    /// The space between a highlighted bubble and its time.
+    nonisolated static let highlightTimeGap: CGFloat = 8
+
     let bubble: Bubble
     let highlights: BubbleHighlights
     let canSeek: Bool
+    let isHighlighted: Bool
     let onSeek: (TimeInterval) -> Void
     let onSpeaker: (Int) -> Void
     let onSpeakerDebug: ((Int) -> Void)?
@@ -102,8 +110,10 @@ private struct BubbleRow: View {
             BubbleWidthLayout(side: bubble.side) {
                 bubbleBody
                     .overlay(alignment: bubble.side == .leading ? .trailing : .leading) {
-                        // Bubbles below a run's label play from beside themselves.
-                        if bubble.label == nil, showsPlay {
+                        if isHighlighted {
+                            highlightTime
+                        } else if bubble.label == nil, showsPlay {
+                            // Bubbles below a run's label play from beside themselves.
                             PlayButton { onSeek(bubble.startTime) }
                                 .offset(x: bubble.side == .leading ? 26 : -26)
                         }
@@ -136,7 +146,7 @@ private struct BubbleRow: View {
         .padding(.horizontal, 12)
         .background(
             RoundedRectangle(cornerRadius: Tokens.bubbleRadius, style: .continuous)
-                .fill(bubble.side == .trailing ? Tokens.softSageFill : Tokens.neutralChip)
+                .fill(fill)
         )
         .contextMenu {
             Button("Copy") {
@@ -145,6 +155,35 @@ private struct BubbleRow: View {
                 pasteboard.setString(bubble.fullText, forType: .string)
             }
         }
+    }
+
+    /// The find highlight while a chat time cites this bubble.
+    private var fill: Color {
+        if isHighlighted { return Color.findHighlightFocused }
+        return bubble.side == .trailing ? Tokens.softSageFill : Tokens.neutralChip
+    }
+
+    /// The highlighted bubble's time, 8 pt outside it: to the right of a
+    /// leading bubble, to the left of a trailing one, which has no room on
+    /// its right.
+    ///
+    /// The overlay puts a zero-width anchor on the bubble's outer edge, and
+    /// the time hangs off the anchor's far side. Alignment guides on the
+    /// time itself were ignored in this overlay, which drew the time inside
+    /// the bubble, over its text (meeting chat phase 10 hardware check F1).
+    private var highlightTime: some View {
+        let isLeading = bubble.side == .leading
+        return Color.clear
+            .frame(width: 0)
+            .overlay(alignment: isLeading ? .leading : .trailing) {
+                Text(TimeFormatting.formatPlaybackTime(bubble.startTime))
+                    .font(.biscottiMono(11))
+                    .foregroundStyle(.inkSecondary)
+                    .fixedSize()
+                    .padding(isLeading ? .leading : .trailing, Self.highlightTimeGap)
+            }
+            .transition(.opacity)
+            .accessibilityHidden(true)
     }
 
     /// "Priya, 0:31: …" for a labeled bubble, "You: …" otherwise; mixed
@@ -348,12 +387,15 @@ private struct CenteredCaption: View {
 }
 
 /// Three 4 pt dots pulsing in turn over 0.9 s; still with Reduce Motion.
-struct TypingDots: View {
+/// Shared with the chat's answers while they stream.
+public struct TypingDots: View {
     static let cycle: TimeInterval = 0.9
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         if reduceMotion {
             dots(at: nil)
         } else {

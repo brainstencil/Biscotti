@@ -4,11 +4,14 @@ import SwiftUI
 
 /// The live transcript's toggle: a 44 pt circle while the drawer is
 /// collapsed, the footer's leading control while it is open. It never moves;
-/// the drawer grows around it.
+/// the drawer grows around it. In the chat card's footer it is bare, as in
+/// the drawer's, and opens the transcript.
 struct LiveToggleButton: View {
     static let size: CGFloat = 44
 
     let viewModel: RecordingViewModel
+    /// In the chat card's footer.
+    var isInCard = false
     @State private var isHovered = false
 
     var body: some View {
@@ -23,7 +26,7 @@ struct LiveToggleButton: View {
                     .foregroundStyle(.inkSecondary)
             }
         }
-        .buttonStyle(LiveToggleStyle(isExpanded: isExpanded, isHovered: isHovered))
+        .buttonStyle(LiveToggleStyle(isBare: isExpanded || isInCard, isHovered: isHovered))
         .onHover { isHovered = $0 }
         .help(Self.tooltip(isExpanded: isExpanded, status: viewModel.liveStatus))
         .accessibilityLabel(isExpanded ? "Hide transcript" : "Show transcript")
@@ -38,11 +41,11 @@ struct LiveToggleButton: View {
     }
 }
 
-/// The toggle's circle: card-filled and shadowed while collapsed, bare while
-/// it sits in the open drawer's footer. Hover fills it with `neutralChip`;
-/// pressing darkens it by a further 6%.
+/// The toggle's circle: card-filled and shadowed on its own, bare while it
+/// sits in a card's footer. Hover fills it with `neutralChip`; pressing
+/// darkens it by a further 6%.
 private struct LiveToggleStyle: ButtonStyle {
-    let isExpanded: Bool
+    let isBare: Bool
     let isHovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -50,7 +53,7 @@ private struct LiveToggleStyle: ButtonStyle {
             .frame(width: LiveToggleButton.size, height: LiveToggleButton.size)
             .background {
                 ZStack {
-                    if !isExpanded {
+                    if !isBare {
                         Circle()
                             .fill(Tokens.cardFill)
                             .shadow(color: Tokens.cardShadow, radius: 6, y: 2)

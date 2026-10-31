@@ -204,7 +204,7 @@ struct AppCoreLiveTests {
         #expect(ctx.live.draft(for: meetingID) == nil)
     }
 
-    @Test("The live transcript setting turns live transcription on and off during a recording")
+    @Test("The live transcript setting turns live transcription on and off during a recording; turned on, it catches up from the start")
     func settingChangeMidRecordingStartsOrStopsLive() async throws {
         let ctx = try LiveCoreFixture(isEnabled: false)
         defer { ctx.fix.cleanup() }
@@ -218,7 +218,7 @@ struct AppCoreLiveTests {
         NotificationCenter.default.post(name: .liveTranscriptEnabledDidChange, object: nil)
         let engine = try await ctx.runningEngine()
         #expect(ctx.live.isEnabled)
-        #expect(ctx.live.startMarker != nil)
+        #expect(ctx.live.startMarker == nil, "the recording's files give it the start of the recording")
 
         try await ctx.fix.store.updateSettings { $0.liveTranscriptEnabled = false }
         NotificationCenter.default.post(name: .liveTranscriptEnabledDidChange, object: nil)

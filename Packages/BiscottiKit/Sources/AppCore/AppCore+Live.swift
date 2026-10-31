@@ -32,10 +32,7 @@ public extension AppCore {
         storageRoot: URL,
         transcriberServiceName: String
     ) throws -> AppCore {
-        let logger = Logger(
-            subsystem: "net.scosman.biscotti",
-            category: "startup"
-        )
+        let logger = Logger(subsystem: "net.scosman.biscotti", category: "startup")
 
         logger.info("AppCore.live: DataStore init starting")
         let store = try DataStore(storage: .onDisk(storageRoot))
@@ -86,7 +83,8 @@ public extension AppCore {
             intelligence: intelligence,
             modelManager: modelManager,
             llmBroker: llmBroker,
-            liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName)
+            liveTranscription: buildLiveTranscription(store: store, serviceName: transcriberServiceName),
+            chatDefaults: .standard
         )
         startChatLoadDriverIfRequested(core)
         logger.info("AppCore.live: done")

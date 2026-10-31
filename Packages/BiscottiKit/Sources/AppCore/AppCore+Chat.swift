@@ -10,6 +10,9 @@ import TranscriptionService
 public extension MeetingChatService {
     /// The chat service on AppCore's other services: the active model, the
     /// recording in progress and the final passes.
+    ///
+    /// - Parameter defaults: Keeps each meeting's open thread and draft
+    ///   across launches; the app passes `.standard`, tests nil.
     convenience init(
         store: DataStore,
         broker: LLMBroker,
@@ -18,7 +21,8 @@ public extension MeetingChatService {
         recording: RecordingController,
         transcription: TranscriptionService,
         policy: ChatResourcePolicy = .forThisMac(),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        defaults: UserDefaults? = nil
     ) {
         self.init(
             store: store,
@@ -28,7 +32,8 @@ public extension MeetingChatService {
             recordingMeetingID: { recording.recordingMeetingID },
             isTranscribing: { transcription.jobs[$0]?.isInProgress ?? false },
             policy: policy,
-            clock: clock
+            clock: clock,
+            defaults: defaults
         )
     }
 }

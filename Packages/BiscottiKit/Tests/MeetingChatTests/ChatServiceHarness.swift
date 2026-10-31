@@ -32,13 +32,16 @@ struct ChatHarness {
     let tap = ScriptedTap()
     /// The service's store: the fixture's, which a test can make fail or hold.
     let chatStore: TestChatStore
+    /// Where the service keeps each meeting's open thread and draft; nil keeps nothing.
+    let defaults: UserDefaults?
     let service: MeetingChatService
 
     init(
         policy: ChatResourcePolicy = ChatResourcePolicy(physicalMemory: 32 << 30),
         clock: any Clock<Duration> = ContinuousClock(),
         liveEnabled: Bool = true,
-        liveModelPresent: Bool = true
+        liveModelPresent: Bool = true,
+        defaults: UserDefaults? = nil
     ) throws {
         let fix = try makeCoreFixture(testName: "MeetingChatTests")
         let world = ChatWorld()
@@ -48,6 +51,7 @@ struct ChatHarness {
         self.world = world
         self.live = live
         self.chatStore = chatStore
+        self.defaults = defaults
         service = MeetingChatService(
             store: chatStore,
             broker: fix.llmBroker,
@@ -56,7 +60,21 @@ struct ChatHarness {
             recordingMeetingID: { world.recordingID },
             isTranscribing: { world.transcribing.contains($0) },
             policy: policy,
-            clock: clock
+            clock: clock,
+            defaults: defaults
+        )
+    }
+
+    /// A new service on the same store and defaults: the chat after the app relaunches.
+    func relaunched() -> MeetingChatService {
+        MeetingChatService(
+            store: chatStore,
+            broker: fix.llmBroker,
+            modelURL: { [world] in world.hasModel ? Self.model : nil },
+            live: live,
+            recordingMeetingID: { [world] in world.recordingID },
+            isTranscribing: { [world] in world.transcribing.contains($0) },
+            defaults: defaults
         )
     }
 

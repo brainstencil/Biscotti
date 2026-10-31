@@ -18,7 +18,7 @@ struct ChatAnswerView: View {
                 ChatStatusLine(text: status)
             } else {
                 if !message.blocks.isEmpty {
-                    ChatAnswerBlocks(blocks: message.blocks, onTime: onTime)
+                    ChatAnswerBlocks(blocks: message.blocks, chipActions: chipActions)
                 }
                 if case .streaming = message.state {
                     TypingDots()
@@ -36,6 +36,14 @@ struct ChatAnswerView: View {
                   let text = ChatAnswerPresentation.finishedAnnouncement(message), !text.isEmpty
             else { return }
             AccessibilityNotification.Announcement(text).post()
+        }
+    }
+
+    private var chipActions: ChatChipActions {
+        let service = service
+        let meetingID = state.meetingID
+        return ChatChipActions(onTime: onTime) { time in
+            await service.citedLine(at: time, meetingID: meetingID)
         }
     }
 }
@@ -62,22 +70,17 @@ struct ChatStatusLine: View {
 
 // MARK: - Blocks
 
-/// The answer's Markdown blocks, 8 pt apart. A click on a time chip calls `onTime`.
+/// The answer's Markdown blocks, 8 pt apart, with their time chips.
 struct ChatAnswerBlocks: View {
     let blocks: [ChatBlock]
-    let onTime: (TimeInterval) -> Void
+    let chipActions: ChatChipActions
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.spacingSM) {
             ForEach(blocks.indices, id: \.self) { index in
-                ChatBlockView(block: blocks[index], onTime: onTime)
+                ChatBlockView(block: blocks[index], chipActions: chipActions)
             }
         }
-        .environment(\.openURL, OpenURLAction { url in
-            guard let seconds = ChatAnswerText.seconds(from: url) else { return .discarded }
-            onTime(seconds)
-            return .handled
-        })
     }
 }
 
@@ -86,15 +89,14 @@ private struct ChatBlockView: View {
     static let bodyFont = Font.system(size: 14)
 
     let block: ChatBlock
-    let onTime: (TimeInterval) -> Void
+    let chipActions: ChatChipActions
 
     var body: some View {
         switch block {
         case let .paragraph(text):
             blockText(text, font: Self.bodyFont)
         case let .heading(text):
-            blockText(text, font: .system(size: 14, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
+            blockText(text, font: .system(size: 14, weight: .semibold), traits: .isHeader)
         case let .bullet(level, text):
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 bulletMarker
@@ -129,25 +131,24 @@ private struct ChatBlockView: View {
             .accessibilityHidden(true)
     }
 
-    private func blockText(_ text: AttributedString, font: Font) -> some View {
+    /// The text, then its chips' targets over it: after the text in
+    /// reading order, for Tab and VoiceOver alike.
+    private func blockText(_ text: AttributedString, font: Font, traits: AccessibilityTraits = []) -> some View {
         let segments = ChatAnswerText.segments(text)
+        let chips = ChatAnswerText.chips(segments)
         return ChatAnswerText.text(segments)
             .font(font)
             .foregroundStyle(.ink)
-            .tint(.sage)
             .lineSpacing(Tokens.chatLineSpacing)
             .textRenderer(ChatChipRenderer())
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityActions {
-                // Named by the chip's own text, which can differ from the
-                // second it goes to (the start of the nearest line).
-                ForEach(ChatAnswerText.chips(segments), id: \.self) { chip in
-                    Button("Go to \(chip.label) in the transcript") {
-                        onTime(chip.time)
-                    }
+            .accessibilityAddTraits(traits)
+            .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
+                if !chips.isEmpty {
+                    ChatChipTargets(layouts: layouts, chips: chips, actions: chipActions)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

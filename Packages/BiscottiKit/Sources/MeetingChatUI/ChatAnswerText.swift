@@ -10,9 +10,9 @@ struct ChatChipAttribute: TextAttribute {
 }
 
 /// Turns a block's text into the `Text` the chat card draws: cited times
-/// become sage mono chips that link to `biscotti-chat-time:<seconds>`.
+/// become sage mono chips. The chips are drawn in the text and act through
+/// the targets `ChatChipTargets` lays over them, so the text holds no links.
 enum ChatAnswerText {
-    static let linkScheme = "biscotti-chat-time"
     /// The chip's horizontal padding, and its corner radius.
     static let chipPadding: CGFloat = 5
     static let chipVerticalPadding: CGFloat = 1
@@ -24,22 +24,9 @@ enum ChatAnswerText {
         var chipTime: TimeInterval?
     }
 
-    static func link(to seconds: TimeInterval) -> URL? {
-        URL(string: "\(linkScheme):\(seconds)")
-    }
-
-    /// The second a chip's link points at; nil for any other URL.
-    static func seconds(from url: URL) -> TimeInterval? {
-        guard url.scheme == linkScheme,
-              let seconds = TimeInterval(url.absoluteString.dropFirst(linkScheme.count + 1)),
-              seconds.isFinite, seconds >= 0
-        else { return nil }
-        return seconds
-    }
-
-    /// The text cut at its chips. Chips get their font, colour, link and
-    /// padding; every other link is removed, because the answer is model
-    /// output and only chips may lead anywhere.
+    /// The text cut at its chips. Chips get their font, colour and padding.
+    /// Every link is removed, because the answer is model output: only chips
+    /// lead anywhere, through their targets.
     ///
     /// The padding is kerning: 5 pt after the character before a chip and
     /// after the chip's last character, so the wash that `ChatChipRenderer`
@@ -48,24 +35,24 @@ enum ChatAnswerText {
         var segments: [Segment] = []
         for (time, range) in text.runs[ChatTimeAttribute.self] {
             var piece = AttributedString(text[range])
+            piece.link = nil
             if let time {
                 piece[AttributeScopes.SwiftUIAttributes.FontAttribute.self] = chipFont
                 piece[AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = .sage
-                piece.link = link(to: time)
                 kernAfterLastCharacter(of: &piece)
                 if let previous = segments.indices.last, segments[previous].chipTime == nil {
                     kernAfterLastCharacter(of: &segments[previous].text)
                 }
                 segments.append(Segment(text: piece, chipTime: time))
             } else {
-                piece.link = nil
                 segments.append(Segment(text: piece, chipTime: nil))
             }
         }
         return segments
     }
 
-    /// The segments as one `Text`, each chip carrying `ChatChipAttribute`.
+    /// The segments as one `Text`, each chip carrying `ChatChipAttribute`
+    /// with its segment's index as its ID.
     static func text(_ segments: [Segment]) -> Text {
         segments.enumerated().reduce(Text(verbatim: "")) { text, item in
             let (index, segment) = item
@@ -76,21 +63,28 @@ enum ChatAnswerText {
         }
     }
 
-    /// A chip as VoiceOver offers it: its text as written, and its target.
-    struct Chip: Hashable {
+    /// A chip as its target offers it to the keyboard and VoiceOver.
+    struct Chip: Hashable, Identifiable {
+        /// Its segment's index, the `ChatChipAttribute` ID of its runs.
+        let id: Int
         /// "0:34" or "12:34–13:10", as the chip reads.
         let label: String
         /// The start of the transcript line it links to.
         let time: TimeInterval
+
+        /// Named by the chip's own text, which can differ from the second it
+        /// goes to (the start of the line it cites).
+        var accessibilityLabel: String {
+            "Go to \(label) in the transcript"
+        }
     }
 
-    /// The chips, in order, once each.
+    /// Every chip, in reading order: a time cited twice is two chips, as it
+    /// is two places to click.
     static func chips(_ segments: [Segment]) -> [Chip] {
-        var seen = Set<Chip>()
-        return segments.compactMap { segment in
-            segment.chipTime.map { Chip(label: String(segment.text.characters), time: $0) }
+        segments.enumerated().compactMap { index, segment in
+            segment.chipTime.map { Chip(id: index, label: String(segment.text.characters), time: $0) }
         }
-        .filter { seen.insert($0).inserted }
     }
 
     private static func kernAfterLastCharacter(of text: inout AttributedString) {
@@ -109,18 +103,25 @@ struct ChatChipRenderer: TextRenderer {
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
-            for rect in Self.chipRects(in: line) {
+            for chip in Self.chipRects(in: line) {
                 let shape = RoundedRectangle(cornerRadius: ChatAnswerText.chipPadding, style: .continuous)
-                context.fill(shape.path(in: rect), with: .color(Tokens.accentWashSoft))
+                context.fill(shape.path(in: chip.rect), with: .color(Tokens.accentWashSoft))
             }
             context.draw(line)
         }
     }
 
-    /// The chip backgrounds on a line: the glyphs' bounds, 5 pt wider on the
-    /// left (the right already holds the chip's trailing kerning) and 1 pt
-    /// taller on each side.
-    static func chipRects(in line: Text.Layout.Line) -> [CGRect] {
+    /// Each chip's rectangles in a layout, by chip ID: one per line it is on.
+    static func chipRects(in layout: Text.Layout) -> [Int: [CGRect]] {
+        layout.flatMap(chipRects(in:)).reduce(into: [:]) { rects, chip in
+            rects[chip.id, default: []].append(chip.rect)
+        }
+    }
+
+    /// The chip backgrounds on a line, with their chip IDs: the glyphs'
+    /// bounds, 5 pt wider on the left (the right already holds the chip's
+    /// trailing kerning) and 1 pt taller on each side.
+    static func chipRects(in line: Text.Layout.Line) -> [(id: Int, rect: CGRect)] {
         var bounds: [Int: CGRect] = [:]
         var order: [Int] = []
         for run in line {
@@ -135,13 +136,15 @@ struct ChatChipRenderer: TextRenderer {
         }
         let horizontal = ChatAnswerText.chipPadding
         let vertical = ChatAnswerText.chipVerticalPadding
-        return order.compactMap { bounds[$0] }.map { rect in
-            CGRect(
-                x: rect.minX - horizontal,
-                y: rect.minY - vertical,
-                width: rect.width + horizontal,
-                height: rect.height + 2 * vertical
-            )
+        return order.compactMap { id in
+            bounds[id].map { rect in
+                (id, CGRect(
+                    x: rect.minX - horizontal,
+                    y: rect.minY - vertical,
+                    width: rect.width + horizontal,
+                    height: rect.height + 2 * vertical
+                ))
+            }
         }
     }
 }

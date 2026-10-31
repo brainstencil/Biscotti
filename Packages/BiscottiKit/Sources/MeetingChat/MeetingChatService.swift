@@ -48,6 +48,8 @@ public final class MeetingChatService {
     let answerFlushInterval: Duration
     /// Time since the service started, on the injected clock.
     let elapsed: @Sendable () -> Duration
+    /// Each meeting's open thread and draft, kept across launches.
+    let restore: ChatRestore
     let logger = Logger(subsystem: "net.scosman.biscotti", category: "meeting-chat")
 
     // MARK: - Answer state
@@ -74,6 +76,8 @@ public final class MeetingChatService {
     ///   - answerFlushInterval: The shortest time between two updates of an
     ///     answer being written.
     ///   - clock: Times `answerFlushInterval`.
+    ///   - defaults: Keeps each meeting's open thread and draft across
+    ///     launches; nil keeps them while the app runs only.
     public init(
         store: any ChatStoring,
         broker: LLMBroker,
@@ -83,7 +87,8 @@ public final class MeetingChatService {
         isTranscribing: @escaping @MainActor (UUID) -> Bool,
         policy: ChatResourcePolicy = .forThisMac(),
         answerFlushInterval: Duration = .milliseconds(50),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        defaults: UserDefaults? = nil
     ) {
         self.store = store
         self.broker = broker
@@ -94,14 +99,17 @@ public final class MeetingChatService {
         self.policy = policy
         self.answerFlushInterval = answerFlushInterval
         elapsed = Self.stopwatch(on: clock)
+        restore = ChatRestore(defaults: defaults)
     }
 
-    /// The state object for a meeting, created on first use and kept while the app runs.
+    /// The state object for a meeting, created on first use and kept while
+    /// the app runs. It starts on the open thread and the draft kept from the
+    /// last launch.
     public func state(for meetingID: UUID) -> MeetingChatState {
         if let state = states[meetingID] {
             return state
         }
-        let state = MeetingChatState(meetingID: meetingID) { [weak self] meetingID in
+        let state = MeetingChatState(meetingID: meetingID, restore: restore) { [weak self] meetingID in
             self?.availability(for: meetingID) ?? .noModel
         }
         states[meetingID] = state
@@ -281,21 +289,6 @@ public final class MeetingChatService {
         }
     }
 
-    /// AppCore calls this when it deletes a meeting. The meeting's answer,
-    /// running or waiting, stops without saving and frees the model for
-    /// other meetings, and its chat state goes.
-    public func meetingWasDeleted(_ meetingID: UUID) {
-        if let run, run.meetingID == meetingID {
-            run.discarded = true
-            stop()
-        }
-        states[meetingID] = nil
-        transcriptFlags[meetingID] = nil
-        flagsSetBySave.remove(meetingID)
-        pendingFinalPasses.remove(meetingID)
-        threadLoadTokens[meetingID] = nil
-    }
-
     // MARK: - Availability
 
     /// In the component doc's order; the first match wins.
@@ -390,6 +383,22 @@ public final class MeetingChatService {
 }
 
 extension MeetingChatService {
+    /// AppCore calls this when it deletes a meeting. The meeting's answer,
+    /// running or waiting, stops without saving and frees the model for
+    /// other meetings, and its chat state goes, with its kept thread and draft.
+    public func meetingWasDeleted(_ meetingID: UUID) {
+        if let run, run.meetingID == meetingID {
+            run.discarded = true
+            stop()
+        }
+        states[meetingID] = nil
+        restore.forget(meetingID: meetingID)
+        transcriptFlags[meetingID] = nil
+        flagsSetBySave.remove(meetingID)
+        pendingFinalPasses.remove(meetingID)
+        threadLoadTokens[meetingID] = nil
+    }
+
     /// Whether a stopped recording's held draft gives chat something to ask
     /// about: one of its rows has text by the evidence's rule. A save that
     /// recorded no text wins, since it replaces the transcript the draft

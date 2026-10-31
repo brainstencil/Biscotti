@@ -112,21 +112,9 @@ extension MeetingChatService {
         }
     }
 
-    /// The meeting's record, with the transcript to answer from: the live
-    /// transcript while this meeting records, otherwise the preferred
-    /// transcript, otherwise the draft.
+    /// The meeting's record, with the transcript to answer from (`transcriptNow(for:)`).
     private func meetingRecord(for meetingID: UUID) async throws -> ChatMeetingRecord {
-        let isRecordingThis = recordingMeetingID() == meetingID
-        // Taken now, when the question is sent.
-        let snapshot = isRecordingThis ? live.snapshot(includeTail: true) : nil
-        let detail = try await store.meetingDetail(id: meetingID)
-        let transcript: ChatTranscript? = if isRecordingThis {
-            snapshot.map { .live($0) }
-        } else if let saved = detail?.preferredTranscript {
-            .saved(saved)
-        } else {
-            live.draft(for: meetingID).map { .draft($0) }
-        }
+        let (transcript, detail) = try await transcriptNow(for: meetingID)
         // A transcript with no lines yet, such as a live session that has heard
         // nothing, fails like a missing one rather than asking the model about nothing.
         guard let transcript, !ChatEvidence.lines(for: transcript).isEmpty else { throw NoChatTranscript() }

@@ -2,8 +2,10 @@ import DataStore
 import Foundation
 
 extension MeetingChatService {
-    /// Loads the meeting's threads and reopens its open thread, if any. Call
-    /// when the meeting's page or recording screen appears.
+    /// Loads the meeting's threads and reopens its open thread, if any: the
+    /// one open earlier in this run, or after a relaunch the one kept from
+    /// the last. A kept thread that is gone is forgotten. Call when the
+    /// meeting's page or recording screen appears.
     ///
     /// - Parameter hasTranscript: Whether the meeting has a preferred
     ///   transcript with some text (``hasTranscriptToAsk(_:)``), when the

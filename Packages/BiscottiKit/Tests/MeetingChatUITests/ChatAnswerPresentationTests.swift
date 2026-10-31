@@ -87,45 +87,40 @@ struct ChatAnswerPresentationTests {
 
     // MARK: - Chips
 
-    @Test("a cited time becomes a padded, linked mono chip; other times and links stay plain")
+    @Test("a cited time becomes a padded mono chip; other times stay plain; the text holds no links")
     func chipSegments() throws {
         let blocks = ChatAnswerParser.blocks("We chose blue [0:21], not [9:59]. See [the docs](https://example.com).", evidenceTimes: [21])
         let segments = try ChatAnswerText.segments(#require(blocks.first).text)
 
         #expect(segments.map { String($0.text.characters) } == ["We chose blue ", "0:21", ", not 9:59. See the docs."])
         #expect(segments.map(\.chipTime) == [nil, 21, nil])
-        #expect(ChatAnswerText.chips(segments) == [ChatAnswerText.Chip(label: "0:21", time: 21)])
+        #expect(ChatAnswerText.chips(segments) == [ChatAnswerText.Chip(id: 1, label: "0:21", time: 21)])
 
         let chip = segments[1].text
-        #expect(chip.runs.allSatisfy { $0.link == ChatAnswerText.link(to: 21) })
         #expect(chip.runs.allSatisfy { $0[AttributeScopes.SwiftUIAttributes.FontAttribute.self] == ChatAnswerText.chipFont })
         // The padding: kerning after the chip's last character and before the chip.
         #expect(chip.runs.last?[AttributeScopes.SwiftUIAttributes.KerningAttribute.self] == ChatAnswerText.chipPadding)
         #expect(segments[0].text.runs.last?[AttributeScopes.SwiftUIAttributes.KerningAttribute.self] == ChatAnswerText.chipPadding)
         #expect(segments[0].text.runs.first?[AttributeScopes.SwiftUIAttributes.KerningAttribute.self] == nil)
-        // Model output links nowhere but to the transcript.
-        #expect(segments[2].text.runs.allSatisfy { $0.link == nil })
+        // Model output links nowhere; a chip leads to the transcript through its target.
+        #expect(segments.allSatisfy { $0.text.runs.allSatisfy { $0.link == nil } })
     }
 
-    @Test("VoiceOver names a chip by its own text, which can differ from the second it goes to")
+    @Test("each chip is a stop in reading order, named by its own text, which can differ from the second it goes to")
     func chipLabelsReadAsWritten() throws {
         let blocks = ChatAnswerParser.blocks("At [0:34], then [12:34–13:10] and [0:34] again.", evidenceTimes: [30, 750])
         let chips = try ChatAnswerText.chips(ChatAnswerText.segments(#require(blocks.first).text))
+        // A time cited twice is two chips on screen, so two stops.
         #expect(chips == [
-            ChatAnswerText.Chip(label: "0:34", time: 30),
-            ChatAnswerText.Chip(label: "12:34–13:10", time: 750)
+            ChatAnswerText.Chip(id: 1, label: "0:34", time: 30),
+            ChatAnswerText.Chip(id: 3, label: "12:34–13:10", time: 750),
+            ChatAnswerText.Chip(id: 5, label: "0:34", time: 30)
         ])
-    }
-
-    @Test("chip links parse back to their second; other URLs are not chips")
-    func timeLinksRoundTrip() throws {
-        let link = try #require(ChatAnswerText.link(to: 42.5))
-        #expect(link.absoluteString == "biscotti-chat-time:42.5")
-        #expect(ChatAnswerText.seconds(from: link) == 42.5)
-        #expect(try ChatAnswerText.seconds(from: #require(ChatAnswerText.link(to: 3725))) == 3725)
-        #expect(try ChatAnswerText.seconds(from: #require(URL(string: "https://example.com/42"))) == nil)
-        #expect(try ChatAnswerText.seconds(from: #require(URL(string: "biscotti-chat-time:soon"))) == nil)
-        #expect(try ChatAnswerText.seconds(from: #require(URL(string: "biscotti-chat-time:-4"))) == nil)
+        #expect(chips.map(\.accessibilityLabel) == [
+            "Go to 0:34 in the transcript",
+            "Go to 12:34–13:10 in the transcript",
+            "Go to 0:34 in the transcript"
+        ])
     }
 
     // MARK: - List

@@ -403,6 +403,11 @@ public final class AppCore {
 
     /// Creates an `AppCore` from pre-built services (used by tests and the
     /// `live` factory).
+    ///
+    /// - Parameter chatDefaults: Where the chat service AppCore builds, when
+    ///   `chat` is nil, keeps each meeting's open thread and draft across
+    ///   launches. The `live` factory passes `.standard`; nil keeps them while
+    ///   the app runs only.
     public init(
         store: DataStore,
         permissions: Permissions,
@@ -419,7 +424,8 @@ public final class AppCore {
         mcpServer: MCPServerController? = nil,
         liveTranscription: LiveTranscriptionService? = nil,
         sendEnvironment: SendEnvironment = .live,
-        chat: MeetingChatService? = nil
+        chat: MeetingChatService? = nil,
+        chatDefaults: UserDefaults? = nil
     ) {
         let liveTranscription = liveTranscription ?? .inert()
         self.store = store
@@ -437,7 +443,10 @@ public final class AppCore {
         self.mcpServer = mcpServer ?? MCPServerController(store: store)
         self.liveTranscription = liveTranscription
         self.sendEnvironment = sendEnvironment
-        self.chat = chat ?? MeetingChatService(store: store, broker: llmBroker, modelManager: modelManager, live: liveTranscription, recording: recording, transcription: transcription)
+        self.chat = chat ?? MeetingChatService(
+            store: store, broker: llmBroker, modelManager: modelManager, live: liveTranscription,
+            recording: recording, transcription: transcription, defaults: chatDefaults
+        )
         prepareModelsAfterLiveModelDownloads()
         resetWorkerWhenLiveFindsItStuck()
         connectChat()

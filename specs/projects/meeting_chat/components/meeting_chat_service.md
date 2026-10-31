@@ -52,11 +52,11 @@ public final class MeetingChatState {
     public let meetingID: UUID
     public internal(set) var availability: ChatAvailability
     public internal(set) var threads: [ChatThreadSummary]   // newest first
-    public internal(set) var openThreadID: UUID?
+    public internal(set) var openThreadID: UUID?            // kept across launches
     public internal(set) var messages: [ChatMessageView]    // the open thread, oldest first
     public internal(set) var isAnswering: Bool
     public var isCardOpen: Bool
-    public var draft: String                                // the field's text, kept per meeting
+    public var draft: String                                // the field's text, kept per meeting and across launches
 }
 
 @MainActor @Observable
@@ -69,15 +69,23 @@ public final class MeetingChatService {
         recordingMeetingID: @escaping @MainActor () -> UUID?,          // from AppCore's recording state
         isTranscribing: @escaping @MainActor (UUID) -> Bool,           // from TranscriptionService.jobs
         policy: ChatResourcePolicy = .forThisMac(),
-        answerFlushInterval: Duration = .milliseconds(50)
+        answerFlushInterval: Duration = .milliseconds(50),
+        clock: any Clock<Duration> = ContinuousClock(),
+        defaults: UserDefaults? = nil                                  // keeps open threads and drafts across launches
     )
 
     /// The state object for a meeting, created on first use and kept while the app runs.
+    /// It starts on the open thread and the draft kept from the last launch.
     public func state(for meetingID: UUID) -> MeetingChatState
-    /// Loads the meeting's threads and reopens its last open thread. Call when the meeting's
+    /// Loads the meeting's threads and reopens its last open thread (after a relaunch, the
+    /// kept one; a kept thread that is gone is forgotten). Call when the meeting's
     /// page or recording screen appears. `hasTranscript` is the caller's reading
     /// (`hasTranscriptToAsk(_:)`); nil reads the store.
     public func load(meetingID: UUID, hasTranscript: Bool? = nil) async
+    /// The line a time chip goes to, for its preview: in the transcript a chip click shows
+    /// (live while this meeting records, else the preferred transcript, else the draft),
+    /// the line starting at `time`, else the last line starting before it.
+    public func citedLine(at time: TimeInterval, meetingID: UUID) async -> ChatEvidenceLine?
     /// A pass saved the meeting's preferred transcript; `hasText` from `hasTranscriptText(_:)`.
     /// Availability itself is computed on each read from observable state
     /// (`MeetingChatState.availability`), so model, setting and recording changes need no call.
@@ -100,12 +108,14 @@ public final class MeetingChatService {
     /// AppCore calls this when a recording stops, so questions waiting for the end start.
     public func recordingDidStop(meetingID: UUID) async
     /// AppCore calls this when it deletes a meeting: its answer stops unsaved, and its chat
-    /// state, transcript flag and save record go.
+    /// state, kept thread and draft, transcript flag and save record go.
     public func meetingWasDeleted(_ meetingID: UUID)
 }
 ```
 
-`AppCore` owns one service (`public let chat: MeetingChatService`), built in `AppCore+Live` from the broker, the store, `modelManager.activeModelURL`, `liveTranscription`, the recording state, and `transcription.jobs`. `AppCore.init` takes it as an optional last parameter with a default built from its other services, like `mcpServer`. Availability needs no call when the model, the live setting or the recording changes: `MeetingChatState.availability` reads them from observable state each time. AppCore calls `finalPassWillStart(meetingID:)` in `stopRecording()` as soon as `recording.stop()` returns, `recordingDidStop(meetingID:)` in `finalPassAfterStop` before the final pass starts (a question that waited for Stop then starts), `finalPassDidEnd(meetingID:)` after the pass, and `transcriptWasSaved(meetingID:hasText:)` from `TranscriptionService.onTranscriptSaved`, inside the pass that saves a transcript.
+`AppCore` owns one service (`public let chat: MeetingChatService`), built in `AppCore+Live` from the broker, the store, `modelManager.activeModelURL`, `liveTranscription`, the recording state, and `transcription.jobs`. `AppCore.init` takes it as an optional parameter with a default built from its other services, like `mcpServer`, and `chatDefaults` for that default's `defaults`: the live factory passes `.standard`, tests nil. Availability needs no call when the model, the live setting or the recording changes: `MeetingChatState.availability` reads them from observable state each time. AppCore calls `finalPassWillStart(meetingID:)` in `stopRecording()` as soon as `recording.stop()` returns, `recordingDidStop(meetingID:)` in `finalPassAfterStop` before the final pass starts (a question that waited for Stop then starts), `finalPassDidEnd(meetingID:)` after the pass, and `transcriptWasSaved(meetingID:hasText:)` from `TranscriptionService.onTranscriptSaved`, inside the pass that saves a transcript.
+
+**Restore after relaunch** (added 30 October 2026). `ChatRestore` keeps two UserDefaults keys per meeting, `meetingChat.openThread.<meeting ID>` (the open thread's ID) and `meetingChat.draft.<meeting ID>` (the field's text), and removes a key when there is nothing to keep. `MeetingChatState` writes them from `didSet` on `openThreadID` and `draft`, so every path that changes them keeps them: asking (which clears the draft, and puts it back if the question cannot be saved), New chat, deleting the thread, and a kept thread that `load` finds gone. The thread's messages come from the store as before. A deleted meeting's keys are removed. The card's open state is not kept.
 
 ## Internal Design
 
@@ -213,6 +223,19 @@ Asking:
 
 Threads:
 - `newChatClearsOpenThread`, `openThreadLoadsMessages`, `deleteOpenThreadActsLikeNewChat`, `threadsNewestFirst`, `lastOpenThreadRemembered`.
+
+Restore (`MeetingChatRestoreTests`, a relaunch is a second service on the same store and defaults suite):
+- `relaunchRestoresThreadAndDraft`: the open thread and the draft come back, the card closed; `load` shows the thread's messages.
+- `sendingClearsKeptDraft`: a sent question clears the kept draft; one that could not be sent stays kept.
+- `meetingsKeepTheirOwn`: two meetings keep separate threads and drafts.
+- `closedThreadsAreNotRestored`: New chat, Delete This Chat… and deleting the meeting leave nothing to restore.
+- `missingKeptThreadIsForgotten`: a kept thread gone from the store is forgotten on `load`.
+- `noDefaultsKeepsNothing`.
+
+Cited line (`MeetingChatCitedLineTests`):
+- `savedTranscriptLine`: a chip's time gives the saved line starting there, and a time inside a line gives that line.
+- `liveTranscriptLine`: during the recording, the live row with its unsettled tail.
+- `noLine`: no transcript, or a time before the first line, gives nil.
 
 Policy:
 - `policyDefaultsToConcurrent`: 8, 16 and 64 GB all give `.concurrent` with the defaults; with `waitForStopMaximumMemory` = 8 GB, 8 GB gives `.waitForStop` and 16 GB `.concurrent`.

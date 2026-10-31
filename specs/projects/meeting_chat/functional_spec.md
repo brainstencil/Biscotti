@@ -26,6 +26,7 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
 - Threads are saved with the meeting and survive quitting the app. For each answer, Biscotti saves its text, when it was asked, which transcript it used (the live draft up to a given time, or a saved transcript version), and whether it was stopped or failed.
 - An answer the user stops is saved with the text so far and marked "Stopped". A question whose answer failed before any text is saved with the error and a Retry button.
 - The field reads "Ask about this meeting" with no thread open, and "Continue chat" when the panel is closed on an open thread.
+- **After a relaunch** (added 30 October 2026, after the Interface Lineage audit's row 28), each meeting's chat reopens on the thread that was open when the app quit, and a half-typed question is still in its field. Both are kept per meeting. Sending the question clears the kept text; New chat, deleting the thread or deleting the meeting forgets the thread. The panel itself starts closed, as after a change of meeting.
 
 ## Asking
 
@@ -40,6 +41,8 @@ Scope decisions are in the [project overview](project_overview.md). Granola's ch
   - During a recording, it opens the transcript drawer at that moment.
   - On a saved meeting, it opens the Transcript tab at that moment and moves the playback position there, without playing.
   - A time that does not match the transcript shows as plain text, not a link.
+  - The pointer becomes a hand over a time. When it rests on a time for a moment, the cited transcript line shows next to it (speaker, time and text) without leaving the answer, and goes away when the pointer leaves. It is the line a click goes to.
+  - With keyboard navigation on, each time is a Tab stop; Space or Return does what a click does.
 - **Cutoff.** During a recording, each answer ends with "Based on the transcript through 12:34". On a saved meeting whose final transcript is not ready yet, it ends with "Based on the draft transcript".
 - Each answer has a **Copy** button that copies its text.
 - A footnote under the field reads "Answers come from the on-device AI and can be wrong."

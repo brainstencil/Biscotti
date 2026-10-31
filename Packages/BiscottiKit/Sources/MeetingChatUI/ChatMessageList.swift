@@ -70,6 +70,7 @@ struct ChatMessageList: View {
                 jumpToEndButton
             }
         }
+        .chatChipPreview()
     }
 
     @ViewBuilder
@@ -109,12 +110,8 @@ struct ChatMessageList: View {
             Image(systemName: "arrow.down")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.inkSecondary)
-                .frame(width: Tokens.chatRoundButton, height: Tokens.chatRoundButton)
-                .background { Circle().fill(Tokens.cardFill).shadow(color: Tokens.cardShadow, radius: 6, y: 2) }
-                .overlay { Circle().strokeBorder(Tokens.cardStroke, lineWidth: 1) }
-                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ChatCircleButtonStyle())
         .padding(.bottom, Tokens.spacingSM)
         .help("Jump to the newest text")
         .accessibilityLabel("Jump to the newest text")

@@ -83,14 +83,27 @@ public final class MeetingChatState {
     public let meetingID: UUID
     /// The meeting's threads, newest first.
     public internal(set) var threads: [ChatThreadSummary] = []
-    public internal(set) var openThreadID: UUID?
+    /// Kept across launches, so the chat reopens on it.
+    public internal(set) var openThreadID: UUID? {
+        didSet {
+            guard openThreadID != oldValue else { return }
+            restore.keepOpenThreadID(openThreadID, meetingID: meetingID)
+        }
+    }
+
     /// The open thread, oldest first.
     public internal(set) var messages: [ChatMessageView] = []
     /// An answer is being written, or waits, in this meeting.
     public internal(set) var isAnswering = false
     public var isCardOpen = false
-    /// The field's text, kept per meeting.
-    public var draft = ""
+    /// The field's text, kept per meeting and across launches.
+    public var draft = "" {
+        didSet {
+            guard draft != oldValue else { return }
+            restore.keepDraft(draft, meetingID: meetingID)
+        }
+    }
+
     /// Asks for the cursor in the question field the user sees next: the
     /// card's while the card is open, otherwise the one in its place. That
     /// field clears the request once it is shown, so a change that swaps one
@@ -99,10 +112,20 @@ public final class MeetingChatState {
     public var focusRequest = false
 
     private let availabilityOf: @MainActor (UUID) -> ChatAvailability
+    @ObservationIgnored private let restore: ChatRestore
 
-    init(meetingID: UUID, availability: @escaping @MainActor (UUID) -> ChatAvailability) {
+    /// Starts on the open thread and the draft that `restore` kept for the
+    /// meeting. The thread's messages come from `load(meetingID:)`.
+    init(
+        meetingID: UUID,
+        restore: ChatRestore = ChatRestore(defaults: nil),
+        availability: @escaping @MainActor (UUID) -> ChatAvailability
+    ) {
         self.meetingID = meetingID
+        self.restore = restore
         availabilityOf = availability
+        openThreadID = restore.openThreadID(meetingID: meetingID)
+        draft = restore.draft(meetingID: meetingID)
     }
 
     /// Worked out on each read from observable state (the model, the recording,
